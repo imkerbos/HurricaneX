@@ -23,30 +23,30 @@
 
 ### 待完成
 
-- [ ] Meson 构建警告修复：Clang + ASan 与 `b_lundef` 冲突，需设置 `b_lundef=false`
-- [ ] HTTP 响应解析补全：解析 `Content-Length`、`Connection` 头字段
-- [ ] TCP 状态机核心实现：
-  - [ ] SYN 包构造与发送
-  - [ ] ISN（初始序列号）生成
-  - [ ] 数据分段与发送
-  - [ ] 输入包解析与状态转换（SYN-ACK → ESTABLISHED、FIN 处理等）
-  - [ ] FIN 包构造与发送
-- [ ] TLS 引擎集成 OpenSSL：
-  - [ ] SSL_CTX 初始化
-  - [ ] 自定义 BIO 对接 `hx_tcp_send` / `hx_tcp_input`
-  - [ ] SSL_write / SSL_read 实现
-- [ ] Preflight 各检查项实现（当前全部返回 "not implemented"）：
-  - [ ] hugepage 检测
-  - [ ] NIC 驱动检测
-  - [ ] CPU/NUMA 拓扑检测
-  - [ ] 权限检测（root / CAP_NET_ADMIN）
-  - [ ] 依赖库检测（libdpdk / libnuma / OpenSSL）
-- [ ] 补充更多单元测试：mempool 测试、pktio mock 独立测试
-- [ ] Go 单元测试：config 加载测试、scheduler 测试
-- [ ] Proto 生成 Go 代码（protoc + protoc-gen-go-grpc）
-- [ ] gRPC server/client 骨架实现
-- [ ] Prometheus 指标模块骨架（`metrics/`）
-- [ ] CI 配置（GitHub Actions：C 构建 + 测试、Go 构建 + lint）
+- [x] Meson 构建警告修复：Clang + ASan 与 `b_lundef` 冲突，已设置 `b_lundef=false`
+- [x] HTTP 响应解析补全：解析 `Content-Length`、`Connection` 头字段
+- [x] TCP 状态机核心实现：
+  - [x] SYN 包构造与发送
+  - [x] ISN（初始序列号）生成
+  - [x] 数据分段与发送
+  - [x] 输入包解析与状态转换（SYN-ACK → ESTABLISHED、FIN 处理等）
+  - [x] FIN 包构造与发送
+- [x] TLS 引擎集成 OpenSSL：
+  - [x] SSL_CTX 初始化
+  - [x] 自定义 BIO 对接 `hx_tcp_send` / `hx_tcp_input`
+  - [x] SSL_write / SSL_read 实现
+- [x] Preflight 各检查项实现（Linux 环境检测，macOS 优雅降级）：
+  - [x] hugepage 检测
+  - [x] NIC 驱动检测
+  - [x] CPU/NUMA 拓扑检测
+  - [x] 权限检测（root / CAP_NET_ADMIN）
+  - [x] 依赖库检测（libdpdk / libnuma / OpenSSL）
+- [x] 补充更多单元测试：mempool 测试（7项）、pktio mock 独立测试（6项）
+- [x] Go 单元测试：config 加载测试（10项）、scheduler 测试（6项）、preflight 测试（6项）
+- [x] Proto 生成 Go 代码（protoc + protoc-gen-go-grpc）
+- [x] gRPC server/client 骨架实现（NodeService、TaskService、MetricsService + 测试）
+- [x] Prometheus 指标模块完善（RecordNodeMetrics + 测试）
+- [x] CI 配置（GitHub Actions：C 构建 + 测试、Go 构建 + lint、Proto 一致性检查）
 
 ### Bug / 已知问题
 

@@ -9,3 +9,27 @@ test('test_tcp',
     dependencies : libhurricane_dep,
   ),
 )
+
+test('test_log',
+  executable('test_log', 'test_log.c',
+    dependencies : libhurricane_dep,
+  ),
+)
+
+test('test_mempool',
+  executable('test_mempool', 'test_mempool.c',
+    dependencies : libhurricane_dep,
+  ),
+)
+
+test('test_pktio',
+  executable('test_pktio', 'test_pktio.c',
+    dependencies : libhurricane_dep,
+  ),
+)
+
+test('test_tls',
+  executable('test_tls', 'test_tls.c',
+    dependencies : libhurricane_dep,
+  ),
+)

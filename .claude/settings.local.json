@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ninja -C /Users/kerbos/Workspaces/project/HurricaneX/build test:*)",
+      "Bash(go get:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(go build:*)"
+    ]
+  }
+}

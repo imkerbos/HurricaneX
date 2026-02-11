@@ -12,6 +12,9 @@ type Config struct {
 	Target    TargetConfig    `yaml:"target"`
 	Engine    EngineConfig    `yaml:"engine"`
 	Scheduler SchedulerConfig `yaml:"scheduler"`
+	GRPC      GRPCConfig      `yaml:"grpc"`
+	Metrics   MetricsConfig   `yaml:"metrics"`
+	Log       LogConfig       `yaml:"log"`
 }
 
 // TargetConfig defines the traffic target.
@@ -38,6 +41,33 @@ type SchedulerConfig struct {
 	HeartbeatSec int    `yaml:"heartbeat_sec"`
 }
 
+// GRPCConfig defines gRPC connection settings.
+type GRPCConfig struct {
+	ListenAddr string    `yaml:"listen_addr"`
+	TLS        TLSConfig `yaml:"tls"`
+}
+
+// TLSConfig defines mTLS certificate paths.
+type TLSConfig struct {
+	CACert     string `yaml:"ca_cert"`
+	ServerCert string `yaml:"server_cert"`
+	ServerKey  string `yaml:"server_key"`
+	ClientCert string `yaml:"client_cert"`
+	ClientKey  string `yaml:"client_key"`
+}
+
+// MetricsConfig defines Prometheus metrics settings.
+type MetricsConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	ListenAddr string `yaml:"listen_addr"`
+}
+
+// LogConfig defines logging settings.
+type LogConfig struct {
+	Level string `yaml:"level"`
+	Dev   bool   `yaml:"dev"`
+}
+
 // Load reads and parses a YAML config file.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -51,7 +81,37 @@ func Load(path string) (*Config, error) {
 	}
 
 	applyDefaults(cfg)
+
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("validate config: %w", err)
+	}
+
 	return cfg, nil
+}
+
+// Validate checks the configuration for invalid values.
+func (c *Config) Validate() error {
+	if c.Target.Port < 0 || c.Target.Port > 65535 {
+		return fmt.Errorf("invalid target port: %d", c.Target.Port)
+	}
+	if c.Engine.Workers < 1 {
+		return fmt.Errorf("workers must be >= 1, got %d", c.Engine.Workers)
+	}
+	if c.Engine.CPS < 1 {
+		return fmt.Errorf("cps must be >= 1, got %d", c.Engine.CPS)
+	}
+	if c.Engine.Connections < 1 {
+		return fmt.Errorf("connections must be >= 1, got %d", c.Engine.Connections)
+	}
+	if c.Engine.DurationSec < 1 {
+		return fmt.Errorf("duration_sec must be >= 1, got %d", c.Engine.DurationSec)
+	}
+	if c.GRPC.TLS.CACert != "" {
+		if c.GRPC.TLS.ServerCert == "" || c.GRPC.TLS.ServerKey == "" {
+			return fmt.Errorf("grpc.tls: ca_cert is set but server_cert or server_key is missing")
+		}
+	}
+	return nil
 }
 
 func applyDefaults(cfg *Config) {
@@ -84,5 +144,14 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Scheduler.HeartbeatSec == 0 {
 		cfg.Scheduler.HeartbeatSec = 5
+	}
+	if cfg.GRPC.ListenAddr == "" {
+		cfg.GRPC.ListenAddr = "0.0.0.0:9527"
+	}
+	if cfg.Metrics.ListenAddr == "" {
+		cfg.Metrics.ListenAddr = ":9090"
+	}
+	if cfg.Log.Level == "" {
+		cfg.Log.Level = "info"
 	}
 }

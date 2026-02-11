@@ -89,8 +89,67 @@ static void test_parse_response(void)
     assert(resp.header_len > 0);
     assert(resp.body_len == 5);
     assert(memcmp(resp.body_start, "hello", 5) == 0);
+    assert(resp.content_length == 5);
+    assert(resp.keep_alive == true);
 
     printf("  PASS: test_parse_response\n");
+}
+
+static void test_parse_connection_close(void)
+{
+    const char *raw =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 3\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "bye";
+
+    hx_http_response_t resp;
+    hx_result_t rc = hx_http_parse_response(
+        (const hx_u8 *)raw, (hx_u32)strlen(raw), &resp);
+
+    assert(rc == HX_OK);
+    assert(resp.status_code == 200);
+    assert(resp.content_length == 3);
+    assert(resp.keep_alive == false);
+
+    printf("  PASS: test_parse_connection_close\n");
+}
+
+static void test_parse_no_content_length(void)
+{
+    const char *raw =
+        "HTTP/1.1 204 No Content\r\n"
+        "Server: test\r\n"
+        "\r\n";
+
+    hx_http_response_t resp;
+    hx_result_t rc = hx_http_parse_response(
+        (const hx_u8 *)raw, (hx_u32)strlen(raw), &resp);
+
+    assert(rc == HX_OK);
+    assert(resp.status_code == 204);
+    assert(resp.content_length == 0);
+    assert(resp.keep_alive == true); /* HTTP/1.1 default */
+
+    printf("  PASS: test_parse_no_content_length\n");
+}
+
+static void test_parse_large_content_length(void)
+{
+    const char *raw =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 1048576\r\n"
+        "\r\n";
+
+    hx_http_response_t resp;
+    hx_result_t rc = hx_http_parse_response(
+        (const hx_u8 *)raw, (hx_u32)strlen(raw), &resp);
+
+    assert(rc == HX_OK);
+    assert(resp.content_length == 1048576);
+
+    printf("  PASS: test_parse_large_content_length\n");
 }
 
 static void test_parse_incomplete(void)
@@ -113,6 +172,9 @@ int main(void)
     test_build_get_request();
     test_build_post_request();
     test_parse_response();
+    test_parse_connection_close();
+    test_parse_no_content_length();
+    test_parse_large_content_length();
     test_parse_incomplete();
     printf("All HTTP tests passed.\n");
     return 0;

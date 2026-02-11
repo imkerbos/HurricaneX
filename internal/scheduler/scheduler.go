@@ -3,6 +3,8 @@ package scheduler
 import (
 	"fmt"
 	"sync"
+
+	"go.uber.org/zap"
 )
 
 // NodeState represents the current state of an engine node.
@@ -25,14 +27,16 @@ type Node struct {
 
 // Scheduler manages distributed engine nodes.
 type Scheduler struct {
-	mu    sync.RWMutex
-	nodes map[string]*Node
+	mu     sync.RWMutex
+	nodes  map[string]*Node
+	logger *zap.Logger
 }
 
 // New creates a new Scheduler.
-func New() *Scheduler {
+func New(logger *zap.Logger) *Scheduler {
 	return &Scheduler{
-		nodes: make(map[string]*Node),
+		nodes:  make(map[string]*Node),
+		logger: logger.Named("scheduler"),
 	}
 }
 
@@ -51,6 +55,11 @@ func (s *Scheduler) RegisterNode(id, addr string) error {
 		Addr:  addr,
 		State: NodeOnline,
 	}
+
+	s.logger.Info("node registered",
+		zap.String("node_id", id),
+		zap.String("addr", addr),
+	)
 	return nil
 }
 
@@ -68,6 +77,9 @@ func (s *Scheduler) ConfirmNode(id string) error {
 	}
 
 	node.State = NodeReady
+	s.logger.Info("node confirmed",
+		zap.String("node_id", id),
+	)
 	return nil
 }
 
@@ -90,4 +102,8 @@ func (s *Scheduler) RemoveNode(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.nodes, id)
+
+	s.logger.Info("node removed",
+		zap.String("node_id", id),
+	)
 }

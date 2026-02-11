@@ -17,3 +17,20 @@ scheduler:
   listen_addr: "0.0.0.0:9527"
   max_nodes: 16
   heartbeat_sec: 5
+
+grpc:
+  listen_addr: "0.0.0.0:9527"
+  tls:
+    ca_cert: ""         # /etc/hurricanex/certs/ca.pem
+    server_cert: ""     # /etc/hurricanex/certs/server.pem
+    server_key: ""      # /etc/hurricanex/certs/server-key.pem
+    client_cert: ""     # /etc/hurricanex/certs/client.pem
+    client_key: ""      # /etc/hurricanex/certs/client-key.pem
+
+metrics:
+  enabled: true
+  listen_addr: ":9090"
+
+log:
+  level: "info"
+  dev: false

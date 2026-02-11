@@ -1,6 +1,44 @@
 #include "hurricane/http.h"
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
+
+/*
+ * Find the start of a header value by name within the header region.
+ * Case-insensitive match. Returns pointer to value (after ": ") or NULL.
+ */
+static const char *hx_http_find_header(const char *headers, const char *hdr_end,
+                                        const char *name)
+{
+    size_t name_len = strlen(name);
+
+    const char *line = headers;
+    while (line < hdr_end) {
+        /* Find end of this line */
+        const char *eol = line;
+        while (eol < hdr_end && *eol != '\r')
+            eol++;
+
+        /* Check if line starts with "Name:" (case-insensitive) */
+        if ((size_t)(eol - line) > name_len + 1 &&
+            strncasecmp(line, name, name_len) == 0 &&
+            line[name_len] == ':') {
+            const char *val = line + name_len + 1;
+            while (val < eol && *val == ' ')
+                val++;
+            return val;
+        }
+
+        /* Skip \r\n to next line */
+        line = eol;
+        if (line + 1 < hdr_end && line[0] == '\r' && line[1] == '\n')
+            line += 2;
+        else
+            break;
+    }
+    return NULL;
+}
 
 const char *hx_http_method_str(hx_http_method_t method)
 {
@@ -112,7 +150,22 @@ hx_result_t hx_http_parse_response(const hx_u8 *data, hx_u32 len,
     resp->body_start = data + resp->header_len;
     resp->body_len = len - resp->header_len;
 
-    /* TODO: Parse Content-Length, Connection headers */
+    /* Parse Content-Length header */
+    resp->content_length = 0;
+    const char *cl_val = hx_http_find_header((const char *)data, hdr_end,
+                                              "Content-Length");
+    if (cl_val) {
+        hx_u64 v = 0;
+        if (sscanf(cl_val, "%llu", &v) == 1)
+            resp->content_length = v;
+    }
+
+    /* Parse Connection header — default to keep-alive for HTTP/1.1 */
+    resp->keep_alive = true;
+    const char *conn_val = hx_http_find_header((const char *)data, hdr_end,
+                                                "Connection");
+    if (conn_val && strncasecmp(conn_val, "close", 5) == 0)
+        resp->keep_alive = false;
 
     return HX_OK;
 }

@@ -4,6 +4,7 @@ project('hurricanex', 'c',
     'c_std=c11',
     'warning_level=2',
     'b_sanitize=address,undefined',
+    'b_lundef=false',
   ],
 )
 
