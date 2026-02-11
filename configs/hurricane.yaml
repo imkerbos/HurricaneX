@@ -1,0 +1,19 @@
+# HurricaneX configuration template
+
+target:
+  host: "example.com"
+  port: 443
+  tls: true
+  path: "/"
+
+engine:
+  workers: 4
+  connections: 10000
+  cps: 1000
+  duration_sec: 60
+  mempool_size: 131072
+
+scheduler:
+  listen_addr: "0.0.0.0:9527"
+  max_nodes: 16
+  heartbeat_sec: 5

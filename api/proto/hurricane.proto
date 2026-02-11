@@ -1,0 +1,141 @@
+syntax = "proto3";
+
+package hurricane;
+
+option go_package = "github.com/kerbos/hurricanex/api/proto";
+
+// Node registration and heartbeat
+service NodeService {
+  // Register a new engine node with the scheduler
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // Periodic heartbeat from engine node
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+// Task management
+service TaskService {
+  // Deploy a traffic task to engine nodes
+  rpc Deploy(DeployRequest) returns (DeployResponse);
+
+  // Stop a running task
+  rpc Stop(StopRequest) returns (StopResponse);
+
+  // Get task status
+  rpc Status(StatusRequest) returns (StatusResponse);
+}
+
+// Metrics reporting
+service MetricsService {
+  // Stream metrics from engine node to scheduler
+  rpc ReportMetrics(stream MetricsReport) returns (MetricsAck);
+}
+
+// --- Node messages ---
+
+message RegisterRequest {
+  string node_id = 1;
+  string addr = 2;
+  int32 workers = 3;
+  int64 memory_mb = 4;
+}
+
+message RegisterResponse {
+  bool accepted = 1;
+  string message = 2;
+}
+
+message HeartbeatRequest {
+  string node_id = 1;
+  int64 timestamp = 2;
+  NodeStatus status = 3;
+}
+
+message HeartbeatResponse {
+  bool ok = 1;
+}
+
+enum NodeStatus {
+  NODE_UNKNOWN = 0;
+  NODE_ONLINE = 1;
+  NODE_READY = 2;
+  NODE_RUNNING = 3;
+  NODE_ERROR = 4;
+}
+
+// --- Task messages ---
+
+message DeployRequest {
+  string task_id = 1;
+  TargetConfig target = 2;
+  EngineConfig engine = 3;
+  repeated string node_ids = 4;  // empty = all ready nodes
+}
+
+message DeployResponse {
+  bool accepted = 1;
+  string task_id = 2;
+  string message = 3;
+}
+
+message StopRequest {
+  string task_id = 1;
+}
+
+message StopResponse {
+  bool ok = 1;
+}
+
+message StatusRequest {
+  string task_id = 1;
+}
+
+message StatusResponse {
+  string task_id = 1;
+  string state = 2;  // "pending", "running", "completed", "failed"
+  repeated NodeTaskStatus nodes = 3;
+}
+
+message NodeTaskStatus {
+  string node_id = 1;
+  string state = 2;
+  int64 connections = 3;
+  int64 cps = 4;
+  int64 bytes_sent = 5;
+}
+
+// --- Config sub-messages ---
+
+message TargetConfig {
+  string host = 1;
+  int32 port = 2;
+  bool tls = 3;
+  string path = 4;
+  string method = 5;
+}
+
+message EngineConfig {
+  int32 workers = 1;
+  int32 connections = 2;
+  int32 cps = 3;
+  int32 duration_sec = 4;
+}
+
+// --- Metrics messages ---
+
+message MetricsReport {
+  string node_id = 1;
+  int64 timestamp = 2;
+  int64 active_connections = 3;
+  int64 total_connections = 4;
+  int64 cps = 5;
+  int64 bytes_sent = 6;
+  int64 bytes_recv = 7;
+  int64 errors = 8;
+  double latency_avg_us = 9;
+  double latency_p99_us = 10;
+}
+
+message MetricsAck {
+  bool ok = 1;
+}

@@ -1,0 +1,16 @@
+# Build artifacts
+build/
+hurricane
+hurricane-ctl
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude Code
+CLAUDE.md
+
+# OS
+.DS_Store
