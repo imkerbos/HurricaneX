@@ -235,6 +235,19 @@ int hx_engine_rx_step(hx_engine_t *eng)
             eng->ct, dst_ip, tcp_dport, src_ip, tcp_sport);
 
         if (!conn) {
+            HX_LOG_WARN(HX_LOG_COMP_ENGINE,
+                        "rx: no conn for %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u "
+                        "(lookup: src=%u.%u.%u.%u:%u dst=%u.%u.%u.%u:%u) "
+                        "ct_count=%u",
+                        (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
+                        (src_ip >> 8) & 0xFF, src_ip & 0xFF, tcp_sport,
+                        (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
+                        (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, tcp_dport,
+                        (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
+                        (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, tcp_dport,
+                        (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
+                        (src_ip >> 8) & 0xFF, src_ip & 0xFF, tcp_sport,
+                        hx_conn_table_count(eng->ct));
             hx_pktio_free_pkt(eng->pktio, pkt);
             continue;
         }
