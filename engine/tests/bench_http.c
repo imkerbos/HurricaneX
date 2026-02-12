@@ -6,10 +6,13 @@
  * Measures HTTP RPS (requests per second).
  *
  * Usage:
- *   ./bench_http --lcores 0 -a <PCI> -- <dst_mac> <src_ip> <dst_ip> [dst_port] [num_conns] [duration_sec] [path]
+ *   ./bench_http --lcores 0 -a <PCI> -- <dst_mac> <src_ip> <dst_ip|hostname>
+ *       [dst_port] [num_conns] [duration_sec] [path] [host_header] [referer]
  *
  * Example:
- *   ./bench_http --lcores 0 -a 7f:00.0 -- 06:bd:69:51:fc:e5 172.31.34.0 172.31.36.171 8080 100 10 /
+ *   ./bench_http --lcores 0 -a 7f:00.0 -- 06:bd:69:51:fc:e5 172.31.34.0 \
+ *       uat-game.p3-uat.click 80 10 10 /api/v1/activity/list \
+ *       uat-game.p3-uat.click "http://uat-game.p3-uat.click/"
  */
 #ifdef HX_USE_DPDK
 
@@ -23,6 +26,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <netdb.h>
+#include <arpa/inet.h>
 
 static int parse_mac(const char *str, hx_u8 mac[6])
 {
@@ -43,6 +48,40 @@ static int parse_ipv4(const char *str, hx_u32 *ip)
     if (a > 255 || b > 255 || c > 255 || d > 255)
         return -1;
     *ip = (a << 24) | (b << 16) | (c << 8) | d;
+    return 0;
+}
+
+/*
+ * Resolve hostname or IPv4 string to a 32-bit IP (host byte order).
+ * Tries parse_ipv4 first, falls back to getaddrinfo for DNS.
+ */
+static int resolve_host(const char *str, hx_u32 *ip)
+{
+    if (parse_ipv4(str, ip) == 0)
+        return 0;
+
+    /* DNS lookup */
+    struct addrinfo hints, *res = NULL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    int ret = getaddrinfo(str, NULL, &hints, &res);
+    if (ret != 0 || !res) {
+        fprintf(stderr, "DNS resolve failed for '%s': %s\n",
+                str, gai_strerror(ret));
+        return -1;
+    }
+
+    struct sockaddr_in *addr = (struct sockaddr_in *)res->ai_addr;
+    uint32_t nip = ntohl(addr->sin_addr.s_addr);
+    *ip = nip;
+
+    printf("  resolved:   %s -> %u.%u.%u.%u\n", str,
+           (nip >> 24) & 0xFF, (nip >> 16) & 0xFF,
+           (nip >> 8) & 0xFF, nip & 0xFF);
+
+    freeaddrinfo(res);
     return 0;
 }
 
@@ -101,8 +140,9 @@ int main(int argc, char **argv)
 
     /* Parse app args */
     if (app_argc < 3) {
-        fprintf(stderr, "Usage: %s <EAL args> -- <dst_mac> <src_ip> <dst_ip>"
-                        " [dst_port] [num_conns] [duration_sec] [path]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <EAL args> -- <dst_mac> <src_ip> <dst_ip|hostname>"
+                        " [dst_port] [num_conns] [duration_sec] [path]"
+                        " [host_header] [referer]\n", argv[0]);
         return 1;
     }
 
@@ -110,7 +150,7 @@ int main(int argc, char **argv)
     memset(&cfg, 0, sizeof(cfg));
     srand((unsigned)time(NULL));
     cfg.src_port_base = (hx_u16)(10000 + (rand() % 40000));
-    cfg.dst_port = 8080;
+    cfg.dst_port = 80;
     cfg.num_conns = 10;
     cfg.duration_sec = 10;
     cfg.http_enabled = true;
@@ -125,10 +165,14 @@ int main(int argc, char **argv)
         fprintf(stderr, "FAIL: invalid src_ip '%s'\n", app_argv[1]);
         return 1;
     }
-    if (parse_ipv4(app_argv[2], &cfg.dst_ip) != 0) {
-        fprintf(stderr, "FAIL: invalid dst_ip '%s'\n", app_argv[2]);
+
+    /* dst_ip: accept IPv4 or hostname (DNS resolve) */
+    const char *dst_host = app_argv[2];
+    if (resolve_host(dst_host, &cfg.dst_ip) != 0) {
+        fprintf(stderr, "FAIL: cannot resolve dst '%s'\n", dst_host);
         return 1;
     }
+
     if (app_argc >= 4)
         cfg.dst_port = (hx_u16)atoi(app_argv[3]);
     if (app_argc >= 5)
@@ -138,10 +182,23 @@ int main(int argc, char **argv)
     if (app_argc >= 7)
         snprintf(cfg.http_path, sizeof(cfg.http_path), "%s", app_argv[6]);
 
-    /* Build Host header from dst_ip:dst_port */
-    snprintf(cfg.http_host, sizeof(cfg.http_host), "%u.%u.%u.%u:%u",
-             (cfg.dst_ip >> 24) & 0xFF, (cfg.dst_ip >> 16) & 0xFF,
-             (cfg.dst_ip >> 8) & 0xFF, cfg.dst_ip & 0xFF, cfg.dst_port);
+    /* Host header: use explicit arg, or hostname if DNS was used, or IP:port */
+    if (app_argc >= 8) {
+        snprintf(cfg.http_host, sizeof(cfg.http_host), "%s", app_argv[7]);
+    } else if (parse_ipv4(dst_host, &(hx_u32){0}) != 0) {
+        /* dst was a hostname — use it as Host header */
+        snprintf(cfg.http_host, sizeof(cfg.http_host), "%s", dst_host);
+    } else {
+        snprintf(cfg.http_host, sizeof(cfg.http_host), "%u.%u.%u.%u:%u",
+                 (cfg.dst_ip >> 24) & 0xFF, (cfg.dst_ip >> 16) & 0xFF,
+                 (cfg.dst_ip >> 8) & 0xFF, cfg.dst_ip & 0xFF, cfg.dst_port);
+    }
+
+    /* Referer header */
+    if (app_argc >= 9) {
+        snprintf(cfg.http_extra_headers, sizeof(cfg.http_extra_headers),
+                 "Referer: %s\r\n", app_argv[8]);
+    }
 
     printf("  dst_mac:    %02x:%02x:%02x:%02x:%02x:%02x\n",
            cfg.dst_mac[0], cfg.dst_mac[1], cfg.dst_mac[2],
@@ -157,7 +214,12 @@ int main(int argc, char **argv)
            cfg.src_port_base + cfg.num_conns - 1);
     printf("  num_conns:  %u\n", cfg.num_conns);
     printf("  duration:   %u sec\n", cfg.duration_sec);
+    printf("  http_host:  %s\n", cfg.http_host);
     printf("  http_path:  %s\n", cfg.http_path);
+    if (cfg.http_extra_headers[0])
+        printf("  headers:    %.*s\n",
+               (int)(strlen(cfg.http_extra_headers) - 2),
+               cfg.http_extra_headers); /* trim trailing \r\n */
 
     /* Mempool + pktio */
     hx_mempool_t *mp = hx_mempool_create("bench", 256, 2048);

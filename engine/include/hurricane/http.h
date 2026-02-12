@@ -26,6 +26,9 @@ typedef struct hx_http_request {
     char             path[1024];
     char             user_agent[128];
 
+    /* Extra headers — raw "Key: Value\r\n" pairs, concatenated */
+    char             extra_headers[2048];
+
     /* Optional body (for POST/PUT) */
     const hx_u8     *body;
     hx_u32           body_len;

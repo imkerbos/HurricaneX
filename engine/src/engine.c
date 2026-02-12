@@ -210,6 +210,9 @@ static void hx_engine_http_step(hx_engine_t *eng)
                      eng->cfg.dst_ip & 0xFF);
         if (eng->cfg.http_path[0])
             snprintf(req.path, sizeof(req.path), "%s", eng->cfg.http_path);
+        if (eng->cfg.http_extra_headers[0])
+            snprintf(req.extra_headers, sizeof(req.extra_headers),
+                     "%s", eng->cfg.http_extra_headers);
 
         hx_u8 buf[2048];
         hx_u32 len = 0;

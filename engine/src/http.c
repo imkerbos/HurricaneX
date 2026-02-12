@@ -87,6 +87,15 @@ hx_result_t hx_http_build_request(const hx_http_request_t *req,
     if (written < 0 || (hx_u32)written >= buf_size)
         return HX_ERR_NOMEM;
 
+    /* Append extra headers (already formatted as "Key: Value\r\n") */
+    if (req->extra_headers[0]) {
+        int eh_written = snprintf((char *)buf + written,
+            buf_size - written, "%s", req->extra_headers);
+        if (eh_written < 0 || (hx_u32)(written + eh_written) >= buf_size)
+            return HX_ERR_NOMEM;
+        written += eh_written;
+    }
+
     /* Add Content-Length for methods with body */
     if (req->body && req->body_len > 0) {
         int cl_written = snprintf((char *)buf + written,

@@ -30,6 +30,7 @@ typedef struct hx_engine_config {
     char    http_host[256];  /* Host header value */
     char    http_path[1024]; /* Request path (default "/") */
     hx_http_method_t http_method; /* GET, POST, etc */
+    char    http_extra_headers[2048]; /* Extra headers: "Key: Value\r\n..." */
 } hx_engine_config_t;
 
 /* Engine statistics */
