@@ -183,16 +183,28 @@ int main(int argc, char **argv)
 {
     printf("=== HurricaneX L7 HTTP Benchmark ===\n");
 
-    /* Split EAL / app args — copy app args before EAL modifies argv */
+    /*
+     * Deep-copy entire argv before EAL init — rte_eal_init() modifies
+     * the argv array and can corrupt pointers after "--".
+     */
+    char **saved_argv = malloc(sizeof(char *) * (argc + 1));
+    for (int i = 0; i < argc; i++) {
+        size_t len = strlen(argv[i]) + 1;
+        saved_argv[i] = malloc(len);
+        memcpy(saved_argv[i], argv[i], len);
+    }
+    saved_argv[argc] = NULL;
+
+    /* Split EAL / app args from the saved copy */
     int eal_argc = argc;
     int app_argc = 0;
-    char *app_args[64]; /* copied pointers */
+    char **app_args = NULL;
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--") == 0) {
+        if (strcmp(saved_argv[i], "--") == 0) {
             eal_argc = i;
-            for (int j = i + 1; j < argc && app_argc < 64; j++)
-                app_args[app_argc++] = strdup(argv[j]);
+            app_args = &saved_argv[i + 1];
+            app_argc = argc - i - 1;
             break;
         }
     }
