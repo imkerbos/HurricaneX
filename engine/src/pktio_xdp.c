@@ -207,13 +207,17 @@ static hx_result_t xdp_init(hx_pktio_t *io, const char *dev,
         return HX_ERR_PKTIO;
     }
 
-    /* Create XDP socket */
+    /* Create XDP socket.
+     *
+     * SKB mode for maximum compatibility on cloud VMs (virtio, ena, etc).
+     * Let libxdp auto-load the default XDP program that steers RX packets
+     * into our socket — do NOT set INHIBIT_PROG_LOAD. */
     struct xsk_socket_config xsk_cfg = {
         .rx_size        = XDP_RX_RING_SIZE,
         .tx_size        = XDP_TX_RING_SIZE,
-        .libbpf_flags   = XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD,
-        .xdp_flags      = 0,
-        .bind_flags     = XDP_USE_NEED_WAKEUP,
+        .libbpf_flags   = 0,
+        .xdp_flags      = XDP_FLAGS_SKB_MODE,
+        .bind_flags     = XDP_USE_NEED_WAKEUP | XDP_COPY,
     };
 
     ret = xsk_socket__create(&priv->xsk, ifname, priv->queue_id,
