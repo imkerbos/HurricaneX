@@ -10,6 +10,12 @@ test('test_tcp',
   ),
 )
 
+test('test_net',
+  executable('test_net', 'test_net.c',
+    dependencies : libhurricane_dep,
+  ),
+)
+
 test('test_log',
   executable('test_log', 'test_log.c',
     dependencies : libhurricane_dep,

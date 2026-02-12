@@ -1,4 +1,5 @@
 #include "hurricane/tcp.h"
+#include "hurricane/net.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -99,14 +100,26 @@ static hx_result_t hx_tcp_send_segment(hx_tcp_conn_t *conn,
     if (rc != HX_OK)
         return rc;
 
+    /* Build TCP segment into a temporary buffer */
+    hx_u8 tcp_buf[HX_MAX_PKT_SIZE];
     hx_u32 seg_len = hx_tcp_build_segment(conn, flags, payload, payload_len,
-                                            pkt->data, pkt->buf_len);
+                                            tcp_buf, sizeof(tcp_buf));
     if (seg_len == 0) {
         hx_pktio_free_pkt(conn->pktio, pkt);
         return HX_ERR_NOMEM;
     }
 
-    pkt->len = seg_len;
+    /* Wrap in Ethernet + IPv4 frame */
+    hx_u32 frame_len = hx_net_build_frame(conn->src_mac, conn->dst_mac,
+                                           conn->src_ip, conn->dst_ip,
+                                           tcp_buf, seg_len,
+                                           pkt->data, pkt->buf_len);
+    if (frame_len == 0) {
+        hx_pktio_free_pkt(conn->pktio, pkt);
+        return HX_ERR_NOMEM;
+    }
+
+    pkt->len = frame_len;
 
     hx_pkt_t *pkts[1] = { pkt };
     int sent = hx_pktio_tx_burst(conn->pktio, pkts, 1);
@@ -207,8 +220,8 @@ hx_result_t hx_tcp_send(hx_tcp_conn_t *conn,
     if (conn->state != HX_TCP_ESTABLISHED)
         return HX_ERR_INVAL;
 
-    /* Segment data into MSS-sized chunks */
-    hx_u32 mss = HX_MAX_PKT_SIZE - HX_TCP_HDR_LEN;
+    /* Segment data into MSS-sized chunks (account for Eth+IP+TCP headers) */
+    hx_u32 mss = HX_MAX_PKT_SIZE - HX_FRAME_HDR_LEN - HX_TCP_HDR_LEN;
     hx_u32 offset = 0;
 
     while (offset < len) {
@@ -388,4 +401,29 @@ hx_result_t hx_tcp_close(hx_tcp_conn_t *conn)
     default:
         return HX_ERR_INVAL;
     }
+}
+
+hx_result_t hx_tcp_input_frame(hx_tcp_conn_t *conn, const hx_pkt_t *pkt)
+{
+    if (!conn || !pkt)
+        return HX_ERR_INVAL;
+
+    hx_u32 src_ip, dst_ip;
+    const hx_u8 *tcp_seg;
+    hx_u32 tcp_len;
+
+    hx_result_t rc = hx_net_parse_frame(pkt->data, pkt->len,
+                                         &src_ip, &dst_ip,
+                                         &tcp_seg, &tcp_len);
+    if (rc != HX_OK)
+        return rc;
+
+    /* Build a temporary pkt pointing at the TCP segment */
+    hx_pkt_t tcp_pkt;
+    tcp_pkt.data    = (hx_u8 *)tcp_seg;
+    tcp_pkt.len     = tcp_len;
+    tcp_pkt.buf_len = tcp_len;
+    tcp_pkt.opaque  = NULL;
+
+    return hx_tcp_input(conn, &tcp_pkt);
 }

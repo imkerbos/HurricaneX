@@ -1,4 +1,5 @@
 #include "hurricane/tcp.h"
+#include "hurricane/net.h"
 #include "hurricane/common.h"
 #include "hurricane/mempool.h"
 #include <assert.h>
@@ -146,11 +147,12 @@ static void test_three_way_handshake(void)
     assert(hx_tcp_connect(&conn, 0x7F000001, 80) == HX_OK);
     assert(conn.state == HX_TCP_SYN_SENT);
 
-    /* Verify SYN packet was sent via pktio */
+    /* Verify SYN packet was sent via pktio (now wrapped in Eth+IP frame) */
     hx_pkt_t *rx[1];
     assert(hx_pktio_rx_burst(&io, rx, 1) == 1);
+    assert(rx[0]->len >= HX_FRAME_HDR_LEN + HX_TCP_HDR_LEN);
     hx_tcp_hdr_t syn_hdr;
-    memcpy(&syn_hdr, rx[0]->data, sizeof(syn_hdr));
+    memcpy(&syn_hdr, rx[0]->data + HX_FRAME_HDR_LEN, sizeof(syn_hdr));
     assert(syn_hdr.flags == HX_TCP_FLAG_SYN);
     hx_pktio_free_pkt(&io, rx[0]);
 
@@ -167,10 +169,11 @@ static void test_three_way_handshake(void)
     assert(conn.rcv_nxt == server_isn + 1);
     assert(conn.snd_wnd == 32768);
 
-    /* Verify ACK was sent to complete handshake */
+    /* Verify ACK was sent to complete handshake (Eth+IP framed) */
     assert(hx_pktio_rx_burst(&io, rx, 1) == 1);
+    assert(rx[0]->len >= HX_FRAME_HDR_LEN + HX_TCP_HDR_LEN);
     hx_tcp_hdr_t ack_hdr;
-    memcpy(&ack_hdr, rx[0]->data, sizeof(ack_hdr));
+    memcpy(&ack_hdr, rx[0]->data + HX_FRAME_HDR_LEN, sizeof(ack_hdr));
     assert(ack_hdr.flags == HX_TCP_FLAG_ACK);
     hx_pktio_free_pkt(&io, rx[0]);
 
@@ -200,16 +203,17 @@ static void test_data_transfer(void)
     assert(hx_tcp_send(&conn, (const hx_u8 *)msg, msg_len) == HX_OK);
     assert(conn.snd_nxt == 1000 + msg_len);
 
-    /* Verify data packet was sent */
+    /* Verify data packet was sent (Eth+IP framed) */
     hx_pkt_t *rx[1];
     assert(hx_pktio_rx_burst(&io, rx, 1) == 1);
+    assert(rx[0]->len == HX_FRAME_HDR_LEN + HX_TCP_HDR_LEN + msg_len);
     hx_tcp_hdr_t data_hdr;
-    memcpy(&data_hdr, rx[0]->data, sizeof(data_hdr));
+    memcpy(&data_hdr, rx[0]->data + HX_FRAME_HDR_LEN, sizeof(data_hdr));
     assert(data_hdr.flags == (HX_TCP_FLAG_ACK | HX_TCP_FLAG_PSH));
-    assert(rx[0]->len == HX_TCP_HDR_LEN + msg_len);
 
     /* Verify payload */
-    assert(memcmp(rx[0]->data + HX_TCP_HDR_LEN, msg, msg_len) == 0);
+    assert(memcmp(rx[0]->data + HX_FRAME_HDR_LEN + HX_TCP_HDR_LEN,
+                  msg, msg_len) == 0);
     hx_pktio_free_pkt(&io, rx[0]);
 
     hx_pktio_close(&io);
@@ -409,6 +413,73 @@ static void test_mock_pktio_loopback(void)
     printf("  PASS: test_mock_pktio_loopback\n");
 }
 
+/* --- Frame-based input test -------------------------------------------- */
+
+static void test_input_frame(void)
+{
+    hx_tcp_conn_t conn;
+    hx_tcp_init(&conn, NULL);
+    conn.state = HX_TCP_SYN_SENT;
+    conn.snd_nxt = 1001; /* after SYN */
+    conn.src_port = 12345;
+    conn.dst_port = 80;
+    conn.src_ip = 0xC0A80001; /* 192.168.0.1 */
+    conn.dst_ip = 0xC0A80002; /* 192.168.0.2 */
+
+    /* Build a SYN+ACK TCP segment */
+    hx_u8 tcp_seg[HX_TCP_HDR_LEN];
+    memset(tcp_seg, 0, sizeof(tcp_seg));
+    hx_tcp_hdr_t *hdr = (hx_tcp_hdr_t *)tcp_seg;
+    hdr->src_port = 80;
+    hdr->dst_port = 12345;
+    hdr->seq      = 5000;
+    hdr->ack      = 1001;
+    hdr->data_off = (HX_TCP_HDR_LEN / 4) << 4;
+    hdr->flags    = HX_TCP_FLAG_SYN | HX_TCP_FLAG_ACK;
+    hdr->window   = 32768;
+
+    /* Wrap in Eth+IP frame */
+    hx_u8 src_mac[6] = {0xAA, 0xBB, 0xCC, 0x01, 0x02, 0x03};
+    hx_u8 dst_mac[6] = {0xDD, 0xEE, 0xFF, 0x04, 0x05, 0x06};
+    hx_u8 frame_buf[HX_MAX_PKT_SIZE];
+    hx_u32 frame_len = hx_net_build_frame(src_mac, dst_mac,
+                                           conn.dst_ip, conn.src_ip,
+                                           tcp_seg, HX_TCP_HDR_LEN,
+                                           frame_buf, sizeof(frame_buf));
+    assert(frame_len > 0);
+
+    hx_pkt_t frame_pkt = {
+        .data = frame_buf,
+        .len = frame_len,
+        .buf_len = sizeof(frame_buf),
+        .opaque = NULL,
+    };
+
+    assert(hx_tcp_input_frame(&conn, &frame_pkt) == HX_OK);
+    assert(conn.state == HX_TCP_ESTABLISHED);
+    assert(conn.rcv_nxt == 5001);
+    assert(conn.snd_wnd == 32768);
+
+    printf("  PASS: test_input_frame\n");
+}
+
+static void test_input_frame_bad(void)
+{
+    hx_tcp_conn_t conn;
+    hx_tcp_init(&conn, NULL);
+    conn.state = HX_TCP_ESTABLISHED;
+
+    /* Short frame — should fail */
+    hx_u8 short_buf[10] = {0};
+    hx_pkt_t short_pkt = { .data = short_buf, .len = 10, .buf_len = 10, .opaque = NULL };
+    assert(hx_tcp_input_frame(&conn, &short_pkt) == HX_ERR_PROTO);
+
+    /* NULL conn */
+    assert(hx_tcp_input_frame(NULL, &short_pkt) == HX_ERR_INVAL);
+
+    printf("  PASS: test_input_frame_bad\n");
+}
+
 int main(void)
 {
     printf("test_tcp:\n");
@@ -434,6 +505,10 @@ int main(void)
 
     /* Pktio integration */
     test_mock_pktio_loopback();
+
+    /* Frame-based input */
+    test_input_frame();
+    test_input_frame_bad();
 
     printf("All TCP tests passed.\n");
     return 0;

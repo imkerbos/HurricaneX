@@ -3,6 +3,7 @@
 
 #include "common.h"
 #include "pktio.h"
+#include "net.h"
 
 /*
  * Custom TCP state machine for high-performance connection simulation.
@@ -47,6 +48,10 @@ typedef struct hx_tcp_conn {
 
     /* Packet I/O reference */
     hx_pktio_t *pktio;
+
+    /* L2 addressing for frame construction */
+    hx_u8   src_mac[6];
+    hx_u8   dst_mac[6];   /* gateway/peer MAC */
 } hx_tcp_conn_t;
 
 /* Initialize a TCP connection (sets state to CLOSED) */
@@ -67,6 +72,14 @@ hx_result_t hx_tcp_send(hx_tcp_conn_t *conn,
  * it via hx_pktio_free_pkt() after this call returns.
  */
 hx_result_t hx_tcp_input(hx_tcp_conn_t *conn, const hx_pkt_t *pkt);
+
+/*
+ * Process an incoming L2 frame (Ethernet + IPv4 + TCP).
+ *
+ * Strips L2/L3 headers, then feeds the TCP segment to hx_tcp_input().
+ * Does NOT take ownership of pkt.
+ */
+hx_result_t hx_tcp_input_frame(hx_tcp_conn_t *conn, const hx_pkt_t *pkt);
 
 /* Initiate graceful close (send FIN) */
 hx_result_t hx_tcp_close(hx_tcp_conn_t *conn);

@@ -8,6 +8,7 @@ engine_sources = files(
   'src/config.c',
   'src/log.c',
   'src/mempool.c',
+  'src/net.c',
   'src/pktio.c',
   'src/pktio_mock.c',
   'src/tcp.c',
