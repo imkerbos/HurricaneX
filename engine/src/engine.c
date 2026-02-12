@@ -214,6 +214,11 @@ int hx_engine_rx_step(hx_engine_t *eng)
                                              &src_ip, &dst_ip,
                                              &tcp_seg, &tcp_len);
         if (rc != HX_OK || tcp_len < HX_TCP_HDR_LEN) {
+            if (eng->stats.pkts_rx <= 5) {
+                HX_LOG_WARN(HX_LOG_COMP_ENGINE,
+                            "rx: parse_frame failed: rc=%d pkt_len=%u tcp_len=%u",
+                            (int)rc, pkt->len, tcp_len);
+            }
             hx_pktio_free_pkt(eng->pktio, pkt);
             continue;
         }
