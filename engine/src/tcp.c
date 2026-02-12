@@ -46,10 +46,6 @@ static hx_pkt_t *hx_tcp_alloc_pkt_desc(void)
     return p;
 }
 
-/*
- * Send a TCP segment — builds Eth+IP+TCP+payload directly into pkt->data
- * in a single pass, no intermediate buffer or extra memcpy.
- */
 static hx_result_t hx_tcp_send_segment(hx_tcp_conn_t *conn,
                                          hx_u8 flags,
                                          const hx_u8 *payload,
@@ -58,69 +54,47 @@ static hx_result_t hx_tcp_send_segment(hx_tcp_conn_t *conn,
     if (!conn->pktio)
         return HX_ERR_INVAL;
 
-    hx_u32 tcp_seg_len = HX_TCP_HDR_LEN + payload_len;
-    hx_u32 frame_len   = HX_FRAME_HDR_LEN + tcp_seg_len;
-
     hx_pkt_t *pkt = hx_tcp_alloc_pkt_desc();
 
     hx_result_t rc = hx_pktio_alloc_pkt(conn->pktio, pkt, HX_MAX_PKT_SIZE);
     if (rc != HX_OK)
         return rc;
 
-    if (frame_len > pkt->buf_len) {
-        hx_pktio_free_pkt(conn->pktio, pkt);
-        return HX_ERR_NOMEM;
-    }
+    /* Build TCP segment into a stack buffer */
+    hx_u32 tcp_seg_len = HX_TCP_HDR_LEN + payload_len;
+    hx_u8 tcp_buf[HX_TCP_HDR_LEN + 1500]; /* TCP hdr + max payload */
 
-    hx_u8 *buf = pkt->data;
-
-    /* --- Ethernet header (14 bytes) --- */
-    memcpy(buf + 0, conn->dst_mac, 6);
-    memcpy(buf + 6, conn->src_mac, 6);
-    hx_u16 etype = hx_htons(HX_ETHER_TYPE_IPV4);
-    memcpy(buf + 12, &etype, 2);
-
-    /* --- IPv4 header (20 bytes) --- */
-    hx_u8 *ip = buf + HX_ETHER_HDR_LEN;
-    memset(ip, 0, HX_IPV4_HDR_LEN);
-    ip[0] = 0x45;                                       /* ver=4, ihl=5 */
-    hx_u16 ip_total = hx_htons((hx_u16)(HX_IPV4_HDR_LEN + tcp_seg_len));
-    memcpy(ip + 2, &ip_total, 2);                       /* total_len */
-    ip[8] = HX_IP_DEFAULT_TTL;                           /* TTL */
-    ip[9] = HX_IP_PROTO_TCP;                             /* protocol */
-    hx_u32 src_n = hx_htonl(conn->src_ip);
-    hx_u32 dst_n = hx_htonl(conn->dst_ip);
-    memcpy(ip + 12, &src_n, 4);                          /* src_ip */
-    memcpy(ip + 16, &dst_n, 4);                          /* dst_ip */
-    /* IP checksum (header only, 20 bytes) */
-    hx_u16 ip_cksum = hx_ip_checksum(ip, HX_IPV4_HDR_LEN);
-    memcpy(ip + 10, &ip_cksum, 2);
-
-    /* --- TCP header (20 bytes) + payload --- */
-    hx_u8 *tcp = buf + HX_FRAME_HDR_LEN;
-    memset(tcp, 0, HX_TCP_HDR_LEN);
+    memset(tcp_buf, 0, HX_TCP_HDR_LEN);
     hx_u16 sp = hx_htons(conn->src_port);
     hx_u16 dp = hx_htons(conn->dst_port);
     hx_u32 seq = hx_htonl(conn->snd_nxt);
     hx_u32 ack = hx_htonl(conn->rcv_nxt);
     hx_u16 wnd = hx_htons(conn->rcv_wnd);
-    memcpy(tcp + 0, &sp, 2);                             /* src_port */
-    memcpy(tcp + 2, &dp, 2);                             /* dst_port */
-    memcpy(tcp + 4, &seq, 4);                            /* seq */
-    memcpy(tcp + 8, &ack, 4);                            /* ack */
-    tcp[12] = (HX_TCP_HDR_LEN / 4) << 4;                /* data_off */
-    tcp[13] = flags;                                      /* flags */
-    memcpy(tcp + 14, &wnd, 2);                           /* window */
-    /* checksum at tcp+16, urgent at tcp+18 — already zeroed */
+    memcpy(tcp_buf + 0, &sp, 2);
+    memcpy(tcp_buf + 2, &dp, 2);
+    memcpy(tcp_buf + 4, &seq, 4);
+    memcpy(tcp_buf + 8, &ack, 4);
+    tcp_buf[12] = (HX_TCP_HDR_LEN / 4) << 4;
+    tcp_buf[13] = flags;
+    memcpy(tcp_buf + 14, &wnd, 2);
 
-    /* Payload directly after TCP header */
     if (payload && payload_len > 0)
-        memcpy(tcp + HX_TCP_HDR_LEN, payload, payload_len);
+        memcpy(tcp_buf + HX_TCP_HDR_LEN, payload, payload_len);
 
-    /* TCP checksum over pseudo-header + segment */
+    /* TCP checksum */
     hx_u16 tcp_cksum = hx_tcp_checksum(conn->src_ip, conn->dst_ip,
-                                        tcp, tcp_seg_len);
-    memcpy(tcp + 16, &tcp_cksum, 2);
+                                        tcp_buf, tcp_seg_len);
+    memcpy(tcp_buf + 16, &tcp_cksum, 2);
+
+    /* Wrap in Ethernet + IPv4 frame */
+    hx_u32 frame_len = hx_net_build_frame(conn->src_mac, conn->dst_mac,
+                                           conn->src_ip, conn->dst_ip,
+                                           tcp_buf, tcp_seg_len,
+                                           pkt->data, pkt->buf_len);
+    if (frame_len == 0) {
+        hx_pktio_free_pkt(conn->pktio, pkt);
+        return HX_ERR_NOMEM;
+    }
 
     pkt->len = frame_len;
 

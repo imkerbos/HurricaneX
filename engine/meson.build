@@ -13,6 +13,7 @@ engine_sources = files(
   'src/net.c',
   'src/pktio.c',
   'src/pktio_mock.c',
+  'src/socket.c',
   'src/tcp.c',
   'src/http.c',
   'src/tls.c',

@@ -46,6 +46,12 @@ test('test_tls',
   ),
 )
 
+test('test_socket',
+  executable('test_socket', 'test_socket.c',
+    dependencies : libhurricane_dep,
+  ),
+)
+
 # DPDK smoke test — build only, not in auto-test (needs root + hugepages + NIC)
 executable('smoke_dpdk', 'smoke_dpdk.c',
   dependencies : libhurricane_dep,
