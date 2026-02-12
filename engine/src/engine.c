@@ -74,7 +74,8 @@ int hx_engine_connect_step(hx_engine_t *eng)
     if (end > cfg->num_conns)
         end = cfg->num_conns;
 
-    for (hx_u32 i = eng->conn_create_idx; i < end; i++) {
+    hx_u32 i;
+    for (i = eng->conn_create_idx; i < end; i++) {
         hx_u16 sport = cfg->src_port_base + (hx_u16)i;
 
         hx_tcp_conn_t *conn = hx_conn_table_insert(
@@ -91,14 +92,26 @@ int hx_engine_connect_step(hx_engine_t *eng)
         }
 
         hx_result_t rc = hx_tcp_connect(conn, cfg->dst_ip, cfg->dst_port);
-        eng->stats.conns_attempted++;
 
         if (rc == HX_OK) {
+            eng->stats.conns_attempted++;
             conn->last_send_ts = ts;
             conn->retries = 0;
             eng->stats.pkts_tx++;
             created++;
+        } else if (rc == HX_ERR_AGAIN || rc == HX_ERR_NOMEM) {
+            /*
+             * TX ring full or mbuf exhaustion — back pressure.
+             * Remove the half-initialized entry and stop this batch.
+             * We'll retry from this index next iteration after RX
+             * processing frees some mbufs.
+             */
+            hx_conn_table_remove(eng->ct,
+                                  cfg->src_ip, sport,
+                                  cfg->dst_ip, cfg->dst_port);
+            break;
         } else {
+            eng->stats.conns_attempted++;
             eng->stats.conns_failed++;
             HX_LOG_WARN(HX_LOG_COMP_ENGINE,
                         "tcp_connect failed for port %u: %s",
@@ -106,7 +119,7 @@ int hx_engine_connect_step(hx_engine_t *eng)
         }
     }
 
-    eng->conn_create_idx = end;
+    eng->conn_create_idx = i;
     return created;
 }
 
