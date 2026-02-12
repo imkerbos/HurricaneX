@@ -4,7 +4,9 @@
       "Bash(ninja -C /Users/kerbos/Workspaces/project/HurricaneX/build test:*)",
       "Bash(go get:*)",
       "Bash(go mod tidy:*)",
-      "Bash(go build:*)"
+      "Bash(go build:*)",
+      "Bash(ninja:*)",
+      "Bash(meson setup:*)"
     ]
   }
 }
