@@ -268,6 +268,24 @@ int hx_engine_rx_step(hx_engine_t *eng)
         };
         rc = hx_tcp_input(conn, &tcp_pkt);
 
+        /* Debug: log first few state transitions */
+        if (eng->stats.pkts_rx <= 5) {
+            hx_u8 rx_flags = 0;
+            if (tcp_len >= HX_TCP_HDR_LEN)
+                rx_flags = tcp_seg[13]; /* flags byte in TCP header */
+            HX_LOG_INFO(HX_LOG_COMP_ENGINE,
+                        "rx: conn %u.%u.%u.%u:%u flags=0x%02x "
+                        "prev_state=%s new_state=%s rc=%d "
+                        "snd_nxt=%u snd_una=%u",
+                        (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
+                        (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, tcp_dport,
+                        rx_flags,
+                        hx_tcp_state_str(prev_state),
+                        hx_tcp_state_str(conn->state),
+                        (int)rc,
+                        conn->snd_nxt, conn->snd_una);
+        }
+
         /* Track state transitions */
         if (conn->state == HX_TCP_ESTABLISHED &&
             prev_state != HX_TCP_ESTABLISHED) {
