@@ -1,7 +1,7 @@
 # Build artifacts
 build/
-hurricane
-hurricane-ctl
+/hurricane
+/hurricane-ctl
 
 # IDE
 .vscode/
