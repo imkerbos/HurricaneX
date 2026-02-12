@@ -309,15 +309,6 @@ int hx_engine_rx_step(hx_engine_t *eng)
         };
         rc = hx_tcp_input(conn, &tcp_pkt);
 
-        /* Debug: log every RX packet's state */
-        hx_u8 rx_flags = tcp_seg[13];
-        hx_u32 rx_tcp_hdr_len = ((tcp_seg[12] >> 4) & 0x0F) * 4;
-        hx_u32 rx_payload = tcp_len > rx_tcp_hdr_len ? tcp_len - rx_tcp_hdr_len : 0;
-        HX_LOG_WARN(HX_LOG_COMP_ENGINE,
-                     "RX: port=%u flags=0x%02x payload=%u state=%d app=%d prev=%d",
-                     tcp_dport, rx_flags, rx_payload,
-                     conn->state, conn->app_state, prev_state);
-
         /* Track state transitions */
         if (conn->state == HX_TCP_ESTABLISHED &&
             prev_state != HX_TCP_ESTABLISHED) {
@@ -329,30 +320,32 @@ int hx_engine_rx_step(hx_engine_t *eng)
 
         /*
          * HTTP response handling: when we receive data on an ESTABLISHED
-         * connection that's waiting for an HTTP response, parse it.
+         * connection that's waiting for an HTTP response, reassemble
+         * payload into app_rxbuf and try to parse.
          */
         if (eng->cfg.http_enabled &&
             conn->state == HX_TCP_ESTABLISHED &&
             conn->app_state == HX_APP_HTTP_RECV) {
             /* Extract TCP payload from the segment */
             hx_u32 tcp_hdr_len = ((tcp_seg[12] >> 4) & 0x0F) * 4;
-            HX_LOG_WARN(HX_LOG_COMP_ENGINE,
-                         "HTTP_RECV: port=%u tcp_len=%u hdr_len=%u payload=%u",
-                         tcp_dport, tcp_len, tcp_hdr_len,
-                         tcp_len > tcp_hdr_len ? tcp_len - tcp_hdr_len : 0);
             if (tcp_len > tcp_hdr_len) {
                 const hx_u8 *payload = tcp_seg + tcp_hdr_len;
                 hx_u32 payload_len = tcp_len - tcp_hdr_len;
 
-                HX_LOG_WARN(HX_LOG_COMP_ENGINE,
-                             "HTTP payload (%u bytes): %.80s",
-                             payload_len, (const char *)payload);
+                /* Append to reassembly buffer */
+                hx_u32 space = sizeof(conn->app_rxbuf) - conn->app_rxbuf_len;
+                hx_u32 copy = payload_len < space ? payload_len : space;
+                if (copy > 0) {
+                    memcpy(conn->app_rxbuf + conn->app_rxbuf_len,
+                           payload, copy);
+                    conn->app_rxbuf_len += copy;
+                }
 
+                /* Try to parse the accumulated buffer */
                 hx_http_response_t resp;
-                hx_result_t hrc = hx_http_parse_response(payload, payload_len, &resp);
+                hx_result_t hrc = hx_http_parse_response(
+                    conn->app_rxbuf, conn->app_rxbuf_len, &resp);
                 if (hrc == HX_OK) {
-                    HX_LOG_WARN(HX_LOG_COMP_ENGINE,
-                                 "HTTP parsed: status=%d", resp.status_code);
                     eng->stats.http_resp_recv++;
                     if (resp.status_code >= 200 && resp.status_code < 300)
                         eng->stats.http_resp_2xx++;
@@ -363,12 +356,8 @@ int hx_engine_rx_step(hx_engine_t *eng)
                     conn->app_state = HX_APP_HTTP_DONE;
                     hx_tcp_close(conn);
                     eng->stats.pkts_tx++;
-                } else {
-                    HX_LOG_WARN(HX_LOG_COMP_ENGINE,
-                                 "HTTP parse failed: %s", hx_strerror(hrc));
                 }
-                /* If HX_ERR_AGAIN, wait for more data (simplified: we don't
-                 * reassemble across packets in Phase 1) */
+                /* If HX_ERR_AGAIN, wait for more data in next packet */
             }
         }
 
