@@ -2,22 +2,25 @@
  * L7 HTTP benchmark — DPDK-based HTTP request test.
  *
  * Usage:
- *   ./bench_http <EAL args> -- [options]
+ *   ./bench_http [EAL args] -- [options]
  *
- * Options:
- *   -m <mac>       Gateway MAC (required)
- *   -s <ip>        Source IP (required)
- *   -u <url>       Target URL: http://host[:port]/path (required)
+ * App options (after "--"):
+ *   -M <mac>       Gateway MAC (required)
+ *   -S <ip>        Source IP (required)
+ *   -U <url>       Target URL: http://host[:port]/path (required)
  *   -H <header>    Extra header, e.g. "Referer: http://example.com/"
- *   -n <num>       Number of connections (default: 10)
- *   -d <sec>       Duration in seconds (default: 10)
+ *   -C <num>       Number of connections (default: 10)
+ *   -D <sec>       Duration in seconds (default: 10)
+ *   -K <num>       Requests per connection (default: 1, 0=unlimited)
+ *
+ * Note: uppercase letters avoid conflict with EAL's -s/-n/-m/-d options.
  *
  * Example:
- *   ./bench_http --lcores 0 -a 7f:00.0 -- \
- *       -m 06:dd:30:51:0d:3d -s 172.31.34.0 \
- *       -u "http://uat-game.p3-uat.click/api/v1/activity/list" \
+ *   ./bench_http -a 7f:00.0 --lcores 0 -- \
+ *       -M 06:dd:30:51:0d:3d -S 172.31.34.117 \
+ *       -U "http://uat-game.p3-uat.click/api/v1/activity/list" \
  *       -H "Referer: http://uat-game.p3-uat.click/" \
- *       -n 10 -d 30
+ *       -C 1000 -K 10 -D 30
  */
 #ifdef HX_USE_DPDK
 
@@ -120,14 +123,14 @@ static void print_stats(const hx_engine_stats_t *s)
 static void print_usage(const char *prog)
 {
     fprintf(stderr,
-        "Usage: %s <EAL args> -- [options]\n"
-        "  -m <mac>       Gateway MAC (required)\n"
-        "  -s <ip>        Source IP (required)\n"
-        "  -u <url>       Target URL: http://host[:port]/path (required)\n"
+        "Usage: %s [EAL args] -- [options]\n"
+        "  -M <mac>       Gateway MAC (required)\n"
+        "  -S <ip>        Source IP (required)\n"
+        "  -U <url>       Target URL: http://host[:port]/path (required)\n"
         "  -H <header>    Extra header (repeatable)\n"
-        "  -n <num>       Number of connections (default: 10)\n"
-        "  -d <sec>       Duration in seconds (default: 10)\n"
-        "  -k <num>       Requests per connection (default: 1, 0=unlimited)\n",
+        "  -C <num>       Number of connections (default: 10)\n"
+        "  -D <sec>       Duration in seconds (default: 10)\n"
+        "  -K <num>       Requests per connection (default: 1, 0=unlimited)\n",
         prog);
 }
 
@@ -237,19 +240,19 @@ int main(int argc, char **argv)
     int headers_off = 0; /* offset into http_extra_headers */
 
     for (int i = 0; i < app_argc; i++) {
-        if (strcmp(app_args[i], "-m") == 0 && i + 1 < app_argc) {
+        if (strcmp(app_args[i], "-M") == 0 && i + 1 < app_argc) {
             if (parse_mac(app_args[++i], cfg.dst_mac) != 0) {
                 fprintf(stderr, "FAIL: invalid MAC '%s'\n", app_args[i]);
                 return 1;
             }
             got_mac = 1;
-        } else if (strcmp(app_args[i], "-s") == 0 && i + 1 < app_argc) {
+        } else if (strcmp(app_args[i], "-S") == 0 && i + 1 < app_argc) {
             if (parse_ipv4(app_args[++i], &cfg.src_ip) != 0) {
                 fprintf(stderr, "FAIL: invalid src_ip '%s'\n", app_args[i]);
                 return 1;
             }
             got_src = 1;
-        } else if (strcmp(app_args[i], "-u") == 0 && i + 1 < app_argc) {
+        } else if (strcmp(app_args[i], "-U") == 0 && i + 1 < app_argc) {
             char host[256];
             if (parse_url(app_args[++i], host, sizeof(host),
                           &cfg.dst_port, cfg.http_path,
@@ -272,11 +275,11 @@ int main(int argc, char **argv)
                              "%s\r\n", app_args[i]);
             if (w > 0)
                 headers_off += w;
-        } else if (strcmp(app_args[i], "-n") == 0 && i + 1 < app_argc) {
+        } else if (strcmp(app_args[i], "-C") == 0 && i + 1 < app_argc) {
             cfg.num_conns = (hx_u32)atoi(app_args[++i]);
-        } else if (strcmp(app_args[i], "-d") == 0 && i + 1 < app_argc) {
+        } else if (strcmp(app_args[i], "-D") == 0 && i + 1 < app_argc) {
             cfg.duration_sec = (hx_u32)atoi(app_args[++i]);
-        } else if (strcmp(app_args[i], "-k") == 0 && i + 1 < app_argc) {
+        } else if (strcmp(app_args[i], "-K") == 0 && i + 1 < app_argc) {
             cfg.http_requests_per_conn = (hx_u32)atoi(app_args[++i]);
         } else {
             fprintf(stderr, "Unknown option: %s\n", app_args[i]);
@@ -287,9 +290,9 @@ int main(int argc, char **argv)
 
     if (!got_mac || !got_src || !got_url) {
         fprintf(stderr, "Missing required options: %s%s%s\n",
-                got_mac ? "" : "-m ",
-                got_src ? "" : "-s ",
-                got_url ? "" : "-u ");
+                got_mac ? "" : "-M ",
+                got_src ? "" : "-S ",
+                got_url ? "" : "-U ");
         print_usage(argv[0]);
         return 1;
     }
