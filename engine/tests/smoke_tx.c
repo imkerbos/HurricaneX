@@ -54,8 +54,22 @@ int main(int argc, char **argv)
 {
     printf("=== HurricaneX DPDK TX smoke test ===\n");
 
-    /* 1. EAL init (consumes EAL args, leaves app args after --) */
-    hx_dpdk_config_t cfg = { .argc = argc, .argv = argv };
+    /* 0. Split args: everything before "--" goes to EAL, after goes to app */
+    int eal_argc = argc;
+    int app_argc = 0;
+    char **app_argv = NULL;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--") == 0) {
+            eal_argc = i;
+            app_argc = argc - i - 1;
+            app_argv = &argv[i + 1];
+            break;
+        }
+    }
+
+    /* 1. EAL init (only EAL args) */
+    hx_dpdk_config_t cfg = { .argc = eal_argc, .argv = argv };
     hx_result_t rc = hx_dpdk_init(&cfg);
     if (rc != HX_OK) {
         fprintf(stderr, "FAIL: hx_dpdk_init: %s\n", hx_strerror(rc));
@@ -63,35 +77,27 @@ int main(int argc, char **argv)
     }
     printf("PASS: EAL initialized\n");
 
-    /* 2. Find app args after "--" */
+    /* 2. Parse app args: <dst_mac> [src_ip] [dst_ip] */
     hx_u8 dst_mac[6] = {0};
     hx_u32 src_ip = 0x0A000001; /* 10.0.0.1 */
     hx_u32 dst_ip = 0x0A000002; /* 10.0.0.2 */
 
-    int app_start = -1;
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--") == 0) {
-            app_start = i + 1;
-            break;
-        }
-    }
-
-    if (app_start > 0 && app_start < argc) {
-        if (parse_mac(argv[app_start], dst_mac) != 0) {
-            fprintf(stderr, "FAIL: invalid dst_mac '%s'\n", argv[app_start]);
+    if (app_argc >= 1) {
+        if (parse_mac(app_argv[0], dst_mac) != 0) {
+            fprintf(stderr, "FAIL: invalid dst_mac '%s'\n", app_argv[0]);
             return 1;
         }
-        if (app_start + 1 < argc) {
-            if (parse_ipv4(argv[app_start + 1], &src_ip) != 0) {
-                fprintf(stderr, "FAIL: invalid src_ip '%s'\n", argv[app_start + 1]);
-                return 1;
-            }
+    }
+    if (app_argc >= 2) {
+        if (parse_ipv4(app_argv[1], &src_ip) != 0) {
+            fprintf(stderr, "FAIL: invalid src_ip '%s'\n", app_argv[1]);
+            return 1;
         }
-        if (app_start + 2 < argc) {
-            if (parse_ipv4(argv[app_start + 2], &dst_ip) != 0) {
-                fprintf(stderr, "FAIL: invalid dst_ip '%s'\n", argv[app_start + 2]);
-                return 1;
-            }
+    }
+    if (app_argc >= 3) {
+        if (parse_ipv4(app_argv[2], &dst_ip) != 0) {
+            fprintf(stderr, "FAIL: invalid dst_ip '%s'\n", app_argv[2]);
+            return 1;
         }
     }
 
