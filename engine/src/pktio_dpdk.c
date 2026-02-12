@@ -17,8 +17,8 @@
 #define DPDK_MBUF_CACHE_SZ  250
 
 /* RX/TX descriptor ring sizes */
-#define DPDK_RX_DESC  1024
-#define DPDK_TX_DESC  1024
+#define DPDK_RX_DESC  4096
+#define DPDK_TX_DESC  4096
 
 typedef struct dpdk_priv {
     uint16_t            port_id;
