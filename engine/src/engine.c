@@ -327,13 +327,23 @@ int hx_engine_rx_step(hx_engine_t *eng)
             conn->app_state == HX_APP_HTTP_RECV) {
             /* Extract TCP payload from the segment */
             hx_u32 tcp_hdr_len = ((tcp_seg[12] >> 4) & 0x0F) * 4;
+            HX_LOG_DEBUG(HX_LOG_COMP_ENGINE,
+                         "HTTP_RECV: port=%u tcp_len=%u hdr_len=%u payload=%u",
+                         tcp_dport, tcp_len, tcp_hdr_len,
+                         tcp_len > tcp_hdr_len ? tcp_len - tcp_hdr_len : 0);
             if (tcp_len > tcp_hdr_len) {
                 const hx_u8 *payload = tcp_seg + tcp_hdr_len;
                 hx_u32 payload_len = tcp_len - tcp_hdr_len;
 
+                HX_LOG_DEBUG(HX_LOG_COMP_ENGINE,
+                             "HTTP payload (%u bytes): %.80s",
+                             payload_len, (const char *)payload);
+
                 hx_http_response_t resp;
                 hx_result_t hrc = hx_http_parse_response(payload, payload_len, &resp);
                 if (hrc == HX_OK) {
+                    HX_LOG_DEBUG(HX_LOG_COMP_ENGINE,
+                                 "HTTP parsed: status=%d", resp.status_code);
                     eng->stats.http_resp_recv++;
                     if (resp.status_code >= 200 && resp.status_code < 300)
                         eng->stats.http_resp_2xx++;
@@ -344,6 +354,9 @@ int hx_engine_rx_step(hx_engine_t *eng)
                     conn->app_state = HX_APP_HTTP_DONE;
                     hx_tcp_close(conn);
                     eng->stats.pkts_tx++;
+                } else {
+                    HX_LOG_DEBUG(HX_LOG_COMP_ENGINE,
+                                 "HTTP parse failed: %s", hx_strerror(hrc));
                 }
                 /* If HX_ERR_AGAIN, wait for more data (simplified: we don't
                  * reassemble across packets in Phase 1) */
