@@ -44,3 +44,8 @@ test('test_tls',
 executable('smoke_dpdk', 'smoke_dpdk.c',
   dependencies : libhurricane_dep,
 )
+
+# DPDK TX smoke test — sends a SYN frame, verify with tcpdump on peer
+executable('smoke_tx', 'smoke_tx.c',
+  dependencies : libhurricane_dep,
+)
