@@ -191,7 +191,7 @@ hx_result_t hx_net_parse_frame(const hx_u8 *frame, hx_u32 frame_len,
         return HX_ERR_PROTO;
 
     hx_u16 ip_total = hx_ntohs(ip.total_len);
-    if (ip_total < ip_hdr_len || HX_ETHER_HDR_LEN + ip_total > frame_len)
+    if (ip_total < ip_hdr_len || (hx_u32)HX_ETHER_HDR_LEN + ip_total > frame_len)
         return HX_ERR_PROTO;
 
     *src_ip  = hx_ntohl(ip.src_ip);
