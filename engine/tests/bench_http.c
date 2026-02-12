@@ -1,12 +1,13 @@
 /*
- * L7 HTTP benchmark — DPDK-based HTTP request test.
+ * L7 HTTP benchmark — AF_XDP-based HTTP request test.
  *
  * Usage:
- *   ./bench_http [EAL args] -- [options]
+ *   ./bench_http [--] [options]
  *
- * App options (after "--"):
+ * Options:
+ *   -I <ifname>    Network interface (required)
  *   -M <mac>       Gateway MAC (required)
- *   -S <ip>        Source IP (required)
+ *   -S <ip>        Source IP (auto-detect from interface if omitted)
  *   -U <url>       Target URL: http://host[:port]/path (required)
  *   -H <header>    Extra header, e.g. "Referer: http://example.com/"
  *   -C <num>       Number of connections (default: 10)
@@ -14,27 +15,27 @@
  *   -K <num>       Requests per connection (default: 1, 0=unlimited)
  *   -B <num>       Launch batch size (default: 64)
  *
- * Note: uppercase letters avoid conflict with EAL's -s/-n/-m/-d options.
- *
  * Example:
- *   ./bench_http -a 7f:00.0 --lcores 0 -- \
- *       -M 06:dd:30:51:0d:3d -S 172.31.34.117 \
- *       -U "http://uat-game.p3-uat.click/api/v1/activity/list" \
- *       -H "Referer: http://uat-game.p3-uat.click/" \
+ *   sudo ./bench_http -- \
+ *       -I eth0 -M 06:dd:30:51:0d:3d \
+ *       -U "http://example.com/api/v1/test" \
+ *       -H "Referer: http://example.com/" \
  *       -C 1000 -K 10 -D 30
  */
-#ifdef HX_USE_DPDK
+#ifdef __linux__
 
-#include "hurricane/dpdk.h"
 #include "hurricane/work_space.h"
 #include "hurricane/mempool.h"
 #include "hurricane/log.h"
+#include "hurricane/pktio.h"
 
-#include <rte_ethdev.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 
@@ -57,6 +58,43 @@ static int parse_ipv4(const char *str, hx_u32 *ip)
     if (a > 255 || b > 255 || c > 255 || d > 255)
         return -1;
     *ip = (a << 24) | (b << 16) | (c << 8) | d;
+    return 0;
+}
+
+/* Get interface MAC address via ioctl */
+static int get_if_mac(const char *ifname, hx_u8 mac[6])
+{
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return -1;
+
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1);
+
+    int ret = ioctl(fd, SIOCGIFHWADDR, &ifr);
+    close(fd);
+    if (ret < 0) return -1;
+
+    memcpy(mac, ifr.ifr_hwaddr.sa_data, 6);
+    return 0;
+}
+
+/* Get interface IPv4 address via ioctl */
+static int get_if_ipv4(const char *ifname, hx_u32 *ip)
+{
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return -1;
+
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1);
+
+    int ret = ioctl(fd, SIOCGIFADDR, &ifr);
+    close(fd);
+    if (ret < 0) return -1;
+
+    struct sockaddr_in *addr = (struct sockaddr_in *)&ifr.ifr_addr;
+    *ip = ntohl(addr->sin_addr.s_addr);
     return 0;
 }
 
@@ -123,9 +161,10 @@ static void print_stats(const struct hx_ws_stats *s)
 static void print_usage(const char *prog)
 {
     fprintf(stderr,
-        "Usage: %s [EAL args] -- [options]\n"
+        "Usage: %s [--] [options]\n"
+        "  -I <ifname>    Network interface (required)\n"
         "  -M <mac>       Gateway MAC (required)\n"
-        "  -S <ip>        Source IP (required)\n"
+        "  -S <ip>        Source IP (auto-detect if omitted)\n"
         "  -U <url>       Target URL: http://host[:port]/path (required)\n"
         "  -H <header>    Extra header (repeatable)\n"
         "  -C <num>       Number of connections (default: 10)\n"
@@ -186,42 +225,27 @@ static int parse_url(const char *url, char *host, size_t host_sz,
 
 int main(int argc, char **argv)
 {
-    printf("=== HurricaneX L7 HTTP Benchmark ===\n");
+    printf("=== HurricaneX L7 HTTP Benchmark (AF_XDP) ===\n");
 
-    /*
-     * Split argv into EAL args and app args at "--".
-     * Deep-copy app args because rte_eal_init() may modify the
-     * original argv array (including entries after eal_argc).
-     */
-    int eal_argc = argc;
-    int app_argc = 0;
-    char *app_args[64];
+    /* Find "--" separator */
+    int app_argc = argc - 1;
+    char **app_argv_raw = &argv[1];
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--") == 0) {
-            eal_argc = i;
-            for (int j = i + 1; j < argc && app_argc < 64; j++) {
-                size_t len = strlen(argv[j]) + 1;
-                app_args[app_argc] = malloc(len);
-                memcpy(app_args[app_argc], argv[j], len);
-                app_argc++;
-            }
+            app_argc = argc - i - 1;
+            app_argv_raw = &argv[i + 1];
             break;
         }
     }
 
-    /* Build a separate argv for EAL so it can't touch our app args */
-    char *eal_argv[64];
-    for (int i = 0; i < eal_argc && i < 64; i++)
-        eal_argv[i] = argv[i];
-    eal_argv[eal_argc] = NULL;
-
-    /* EAL init — use separate eal_argv */
-    hx_dpdk_config_t dpdk_cfg = { .argc = eal_argc, .argv = eal_argv };
-    hx_result_t rc = hx_dpdk_init(&dpdk_cfg);
-    if (rc != HX_OK) {
-        fprintf(stderr, "FAIL: hx_dpdk_init: %s\n", hx_strerror(rc));
-        return 1;
+    /* Deep-copy app args */
+    char *app_args[64];
+    if (app_argc > 64) app_argc = 64;
+    for (int i = 0; i < app_argc; i++) {
+        size_t len = strlen(app_argv_raw[i]) + 1;
+        app_args[i] = malloc(len);
+        memcpy(app_args[i], app_argv_raw[i], len);
     }
 
     /* Parse app args: flag style */
@@ -238,11 +262,15 @@ int main(int argc, char **argv)
     cfg.http_requests_per_conn = 1;
     snprintf(cfg.http_path, sizeof(cfg.http_path), "/");
 
-    int got_mac = 0, got_src = 0, got_url = 0;
-    int headers_off = 0; /* offset into http_extra_headers */
+    int got_if = 0, got_mac = 0, got_url = 0, got_src = 0;
+    int headers_off = 0;
+    char ifname[IFNAMSIZ] = {0};
 
     for (int i = 0; i < app_argc; i++) {
-        if (strcmp(app_args[i], "-M") == 0 && i + 1 < app_argc) {
+        if (strcmp(app_args[i], "-I") == 0 && i + 1 < app_argc) {
+            snprintf(ifname, sizeof(ifname), "%s", app_args[++i]);
+            got_if = 1;
+        } else if (strcmp(app_args[i], "-M") == 0 && i + 1 < app_argc) {
             if (parse_mac(app_args[++i], cfg.dst_mac) != 0) {
                 fprintf(stderr, "FAIL: invalid MAC '%s'\n", app_args[i]);
                 return 1;
@@ -262,12 +290,10 @@ int main(int argc, char **argv)
                 fprintf(stderr, "FAIL: invalid URL '%s'\n", app_args[i]);
                 return 1;
             }
-            /* Resolve host to IP */
             if (resolve_host(host, &cfg.dst_ip) != 0) {
                 fprintf(stderr, "FAIL: cannot resolve '%s'\n", host);
                 return 1;
             }
-            /* Set Host header */
             snprintf(cfg.http_host, sizeof(cfg.http_host), "%s", host);
             got_url = 1;
         } else if (strcmp(app_args[i], "-H") == 0 && i + 1 < app_argc) {
@@ -292,21 +318,39 @@ int main(int argc, char **argv)
         }
     }
 
-    if (!got_mac || !got_src || !got_url) {
+    if (!got_if || !got_mac || !got_url) {
         fprintf(stderr, "Missing required options: %s%s%s\n",
+                got_if ? "" : "-I ",
                 got_mac ? "" : "-M ",
-                got_src ? "" : "-S ",
                 got_url ? "" : "-U ");
         print_usage(argv[0]);
         return 1;
     }
 
-    printf("  dst_mac:    %02x:%02x:%02x:%02x:%02x:%02x\n",
-           cfg.dst_mac[0], cfg.dst_mac[1], cfg.dst_mac[2],
-           cfg.dst_mac[3], cfg.dst_mac[4], cfg.dst_mac[5]);
+    /* Auto-detect src MAC from interface */
+    if (get_if_mac(ifname, cfg.src_mac) != 0) {
+        fprintf(stderr, "FAIL: cannot get MAC for '%s'\n", ifname);
+        return 1;
+    }
+
+    /* Auto-detect src IP if not specified */
+    if (!got_src) {
+        if (get_if_ipv4(ifname, &cfg.src_ip) != 0) {
+            fprintf(stderr, "FAIL: cannot get IP for '%s'\n", ifname);
+            return 1;
+        }
+    }
+
+    printf("  interface:  %s\n", ifname);
+    printf("  src_mac:    %02x:%02x:%02x:%02x:%02x:%02x\n",
+           cfg.src_mac[0], cfg.src_mac[1], cfg.src_mac[2],
+           cfg.src_mac[3], cfg.src_mac[4], cfg.src_mac[5]);
     printf("  src_ip:     %u.%u.%u.%u\n",
            (cfg.src_ip >> 24) & 0xFF, (cfg.src_ip >> 16) & 0xFF,
            (cfg.src_ip >> 8) & 0xFF, cfg.src_ip & 0xFF);
+    printf("  dst_mac:    %02x:%02x:%02x:%02x:%02x:%02x\n",
+           cfg.dst_mac[0], cfg.dst_mac[1], cfg.dst_mac[2],
+           cfg.dst_mac[3], cfg.dst_mac[4], cfg.dst_mac[5]);
     printf("  dst_ip:     %u.%u.%u.%u\n",
            (cfg.dst_ip >> 24) & 0xFF, (cfg.dst_ip >> 16) & 0xFF,
            (cfg.dst_ip >> 8) & 0xFF, cfg.dst_ip & 0xFF);
@@ -321,7 +365,7 @@ int main(int argc, char **argv)
     if (cfg.http_extra_headers[0])
         printf("  headers:    %.*s\n",
                (int)(strlen(cfg.http_extra_headers) - 2),
-               cfg.http_extra_headers); /* trim trailing \r\n */
+               cfg.http_extra_headers);
     printf("  keep-alive: %s\n",
            cfg.http_requests_per_conn == 1 ? "off" :
            cfg.http_requests_per_conn == 0 ? "unlimited" : "on");
@@ -335,22 +379,22 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* Build device string "xdp:<ifname>" */
+    char dev[64];
+    snprintf(dev, sizeof(dev), "xdp:%s", ifname);
+
     hx_pktio_t io;
-    rc = hx_pktio_init(&io, &hx_pktio_dpdk_ops, "dpdk:0", mp);
+#ifdef HX_USE_XDP
+    hx_result_t rc = hx_pktio_init(&io, &hx_pktio_xdp_ops, dev, mp);
+#else
+    fprintf(stderr, "WARN: AF_XDP not available, falling back to mock\n");
+    hx_result_t rc = hx_pktio_init(&io, &hx_pktio_mock_ops, "mock:0", mp);
+#endif
     if (rc != HX_OK) {
         fprintf(stderr, "FAIL: hx_pktio_init: %s\n", hx_strerror(rc));
         hx_mempool_destroy(mp);
         return 1;
     }
-
-    /* Get port MAC */
-    struct rte_ether_addr port_mac;
-    if (rte_eth_macaddr_get(0, &port_mac) == 0)
-        memcpy(cfg.src_mac, port_mac.addr_bytes, 6);
-
-    printf("  src_mac:    %02x:%02x:%02x:%02x:%02x:%02x\n",
-           cfg.src_mac[0], cfg.src_mac[1], cfg.src_mac[2],
-           cfg.src_mac[3], cfg.src_mac[4], cfg.src_mac[5]);
 
     /* Work space init + run */
     struct hx_work_space ws;
@@ -373,20 +417,22 @@ int main(int argc, char **argv)
     hx_ws_cleanup(&ws);
     hx_pktio_close(&io);
     hx_mempool_destroy(mp);
-    hx_dpdk_cleanup();
+
+    /* Free deep-copied args */
+    for (int i = 0; i < app_argc; i++)
+        free(app_args[i]);
 
     printf("=== DONE ===\n");
     return 0;
 }
 
-#else /* !HX_USE_DPDK */
+#else /* !__linux__ */
 
 #include <stdio.h>
 
 int main(void)
 {
-    fprintf(stderr, "This benchmark requires HX_USE_DPDK. "
-                    "Build with DPDK to run.\n");
+    fprintf(stderr, "This benchmark requires Linux (AF_XDP).\n");
     return 77;
 }
 

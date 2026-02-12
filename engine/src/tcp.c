@@ -17,7 +17,6 @@ static hx_u32 hx_tcp_generate_isn(void)
 {
     /*
      * Simple ISN: time-based + random component.
-     * In production DPDK path this would use rte_rdtsc() for speed.
      */
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);

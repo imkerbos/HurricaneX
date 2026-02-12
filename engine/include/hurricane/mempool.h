@@ -5,9 +5,7 @@
 
 /*
  * Simple memory pool for packet buffers.
- *
- * In production, wraps DPDK rte_mempool.
- * For development, uses a basic free-list allocator.
+ * Uses a basic free-list allocator.
  */
 
 typedef struct hx_mempool hx_mempool_t;

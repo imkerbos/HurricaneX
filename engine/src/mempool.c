@@ -4,8 +4,7 @@
 #include <string.h>
 
 /*
- * Simple free-list memory pool for development/testing.
- * In production, this will wrap DPDK rte_mempool.
+ * Simple free-list memory pool.
  */
 
 struct hx_mempool {

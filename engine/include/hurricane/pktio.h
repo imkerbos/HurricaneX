@@ -7,16 +7,17 @@
 /*
  * Packet I/O abstraction layer.
  *
- * In production, backed by DPDK rte_ethdev.
- * For development/testing, backed by a mock (socket/loopback).
+ * Backends:
+ *   - mock:  loopback ring for development/testing
+ *   - xdp:   AF_XDP (Linux 5.4+) for high-performance packet I/O
  */
 
-/* Opaque packet buffer — wraps rte_mbuf in DPDK mode */
+/* Opaque packet buffer */
 typedef struct hx_pkt {
     hx_u8  *data;
     hx_u32  len;
     hx_u32  buf_len;
-    void   *opaque;   /* backend private: rte_mbuf* in DPDK mode, NULL otherwise */
+    void   *opaque;   /* backend private */
 } hx_pkt_t;
 
 /* Opaque packet I/O context */
@@ -74,9 +75,9 @@ void hx_pktio_free_pkt(hx_pktio_t *io, hx_pkt_t *pkt);
 /* Mock backend ops — for development/testing */
 extern const hx_pktio_ops_t hx_pktio_mock_ops;
 
-/* DPDK backend ops — available when compiled with HX_USE_DPDK */
-#ifdef HX_USE_DPDK
-extern const hx_pktio_ops_t hx_pktio_dpdk_ops;
+/* AF_XDP backend ops — available on Linux 5.4+ */
+#ifdef __linux__
+extern const hx_pktio_ops_t hx_pktio_xdp_ops;
 #endif
 
 #endif /* HURRICANE_PKTIO_H */

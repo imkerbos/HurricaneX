@@ -16,8 +16,8 @@
  *   tcp_data — PSH+ACK packet (TCP header + HTTP payload)
  *   tcp      — ACK/FIN packet (bare 20-byte TCP header)
  *
- * In DPDK mode, uses rte_mempool with mbuf userdata tagging for
- * zero-copy recycling. In mock mode, uses hx_mempool.
+ * In AF_XDP mode, packets live in UMEM frames for zero-copy TX.
+ * In mock mode, uses hx_mempool.
  */
 
 #define HX_MBUF_DATA_SIZE 2048

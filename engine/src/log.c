@@ -5,20 +5,6 @@
 #include <string.h>
 #include <time.h>
 
-#ifdef HX_USE_DPDK
-#include <rte_log.h>
-
-static uint32_t hx_to_rte_level[] = {
-    [HX_LOG_LEVEL_DEBUG] = RTE_LOG_DEBUG,
-    [HX_LOG_LEVEL_INFO]  = RTE_LOG_INFO,
-    [HX_LOG_LEVEL_WARN]  = RTE_LOG_WARNING,
-    [HX_LOG_LEVEL_ERROR] = RTE_LOG_ERR,
-    [HX_LOG_LEVEL_FATAL] = RTE_LOG_CRIT,
-};
-
-static int hx_rte_logtype;
-#endif
-
 static hx_log_level_t g_log_level = HX_LOG_LEVEL_INFO;
 
 static const char *level_strings[] = {
@@ -35,13 +21,6 @@ hx_result_t hx_log_init(hx_log_level_t level)
         return HX_ERR_INVAL;
 
     g_log_level = level;
-
-#ifdef HX_USE_DPDK
-    hx_rte_logtype = rte_log_register("hurricanex");
-    if (hx_rte_logtype < 0)
-        return HX_ERR_INTERNAL;
-    rte_log_set_level(hx_rte_logtype, hx_to_rte_level[level]);
-#endif
 
     return HX_OK;
 }
@@ -131,9 +110,5 @@ void hx_log_write(hx_log_level_t level, const char *component,
     if (n < 0 || (size_t)n >= sizeof(line))
         return; /* truncated, drop silently */
 
-#ifdef HX_USE_DPDK
-    rte_log(hx_to_rte_level[level], hx_rte_logtype, "%s", line);
-#else
     fputs(line, stderr);
-#endif
 }

@@ -16,12 +16,6 @@ test('test_net',
   ),
 )
 
-test('test_conn_table',
-  executable('test_conn_table', 'test_conn_table.c',
-    dependencies : libhurricane_dep,
-  ),
-)
-
 test('test_log',
   executable('test_log', 'test_log.c',
     dependencies : libhurricane_dep,
@@ -64,22 +58,12 @@ test('test_work_space',
   ),
 )
 
-# DPDK smoke test — build only, not in auto-test (needs root + hugepages + NIC)
-executable('smoke_dpdk', 'smoke_dpdk.c',
-  dependencies : libhurricane_dep,
-)
-
-# DPDK TX smoke test — sends a SYN frame, verify with tcpdump on peer
-executable('smoke_tx', 'smoke_tx.c',
-  dependencies : libhurricane_dep,
-)
-
-# L4 TCP benchmark — DPDK handshake test
+# L4 TCP benchmark — AF_XDP handshake test (needs root + NIC)
 executable('bench_l4', 'bench_l4.c',
   dependencies : libhurricane_dep,
 )
 
-# L7 HTTP benchmark — DPDK HTTP request test
+# L7 HTTP benchmark — AF_XDP HTTP request test (needs root + NIC)
 executable('bench_http', 'bench_http.c',
   dependencies : libhurricane_dep,
 )

@@ -7,7 +7,7 @@
  * Network frame construction and parsing layer.
  *
  * Provides Ethernet + IPv4 header handling so the TCP state machine
- * can produce complete L2 frames for DPDK transmission and parse
+ * can produce complete L2 frames for transmission and parse
  * incoming frames from the wire.
  */
 

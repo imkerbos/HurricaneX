@@ -1,7 +1,6 @@
 engine_inc = include_directories('include')
 
 openssl_dep = dependency('openssl', required : true)
-dpdk_dep = dependency('libdpdk', required : false)
 
 engine_sources = files(
   'src/common.c',
@@ -17,19 +16,25 @@ engine_sources = files(
   'src/tcp.c',
   'src/http.c',
   'src/tls.c',
-  'src/conn_table.c',  # legacy — still used by test_conn_table, test_tcp, tls
-  'src/engine.c',      # legacy — kept for compilation, no external callers
 )
 
 engine_deps = [openssl_dep]
 
-if dpdk_dep.found()
-  engine_sources += files('src/pktio_dpdk.c', 'src/dpdk_init.c')
-  engine_deps += dpdk_dep
-  add_project_arguments('-DHX_USE_DPDK', language : 'c')
-  message('DPDK found — building with DPDK pktio backend')
+# AF_XDP backend — Linux only, requires libxdp + libbpf
+if host_machine.system() == 'linux'
+  libxdp_dep = dependency('libxdp', required : false)
+  libbpf_dep = dependency('libbpf', required : false)
+
+  if libxdp_dep.found() and libbpf_dep.found()
+    engine_sources += files('src/pktio_xdp.c')
+    engine_deps += [libxdp_dep, libbpf_dep]
+    add_project_arguments('-DHX_USE_XDP', language : 'c')
+    message('libxdp + libbpf found — building with AF_XDP pktio backend')
+  else
+    message('libxdp/libbpf not found — building with mock pktio only')
+  endif
 else
-  message('DPDK not found — building with mock pktio only')
+  message('Non-Linux host — building with mock pktio only')
 endif
 
 libhurricane = static_library('hurricane',

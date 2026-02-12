@@ -17,7 +17,7 @@ typedef enum {
     HX_ERR_TLS = -7,
     HX_ERR_PROTO = -8,
     HX_ERR_INTERNAL = -9,
-    HX_ERR_DPDK = -10,
+    HX_ERR_PKTIO = -10,
 } hx_result_t;
 
 /* Return human-readable error string */

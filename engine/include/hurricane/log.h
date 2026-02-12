@@ -6,10 +6,7 @@
 /*
  * Structured JSON logging for HurricaneX engine.
  *
- * When compiled with HX_USE_DPDK, routes through rte_log.
- * Otherwise, outputs to stderr.
- *
- * All log output is single-line JSON (ndjson format):
+ * Outputs to stderr as single-line JSON (ndjson format):
  * {"ts":"2026-02-12T03:14:15.926535Z","level":"info","component":"tcp","msg":"..."}
  */
 

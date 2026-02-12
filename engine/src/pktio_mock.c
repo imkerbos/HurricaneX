@@ -6,7 +6,7 @@
  * Mock packet I/O backend for development and testing.
  *
  * Uses a simple loopback ring buffer: transmitted packets are queued
- * and can be received back, allowing local testing without DPDK or NICs.
+ * and can be received back, allowing local testing without a NIC.
  */
 
 #define MOCK_RING_SIZE 1024
