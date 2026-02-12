@@ -13,7 +13,16 @@
 #define HX_SYN_RETRANSMIT_BATCH 32   /* max retransmits per scan */
 
 /* Default batch size: create this many connections per main-loop iteration */
-#define HX_CONNECT_BATCH_DEFAULT 16
+#define HX_CONNECT_BATCH_DEFAULT 64
+
+/*
+ * Pre-built HTTP request cache.
+ * Built once on first call, reused for all connections — avoids
+ * per-connection snprintf/build overhead in the hot path.
+ */
+static hx_u8  g_http_req_buf[2048];
+static hx_u32 g_http_req_len = 0;
+static bool    g_http_req_built = false;
 
 /* --- Time helpers ------------------------------------------------------ */
 
@@ -40,6 +49,10 @@ hx_result_t hx_engine_init(hx_engine_t *eng, hx_pktio_t *pktio,
     eng->running = false;
     eng->conn_create_idx = 0;
     eng->conn_create_batch = HX_CONNECT_BATCH_DEFAULT;
+
+    /* Reset pre-built HTTP request cache */
+    g_http_req_built = false;
+    g_http_req_len = 0;
 
     /* Create connection table (2x capacity for headroom) */
     hx_u32 ct_cap = cfg->num_conns * 2;
@@ -183,20 +196,8 @@ static void hx_engine_http_step(hx_engine_t *eng)
     if (!eng || !eng->ct || !eng->cfg.http_enabled)
         return;
 
-    hx_conn_table_t *ct = eng->ct;
-    int sent = 0;
-
-    for (hx_u32 i = 0; i < ct->capacity && sent < 64; i++) {
-        hx_conn_slot_t *s = &ct->slots[i];
-        if (s->state != HX_CONN_SLOT_USED)
-            continue;
-
-        hx_tcp_conn_t *conn = &s->conn;
-        if (conn->state != HX_TCP_ESTABLISHED ||
-            conn->app_state != HX_APP_HTTP_SEND)
-            continue;
-
-        /* Build HTTP request */
+    /* Build HTTP request once, reuse for all connections */
+    if (!g_http_req_built) {
         hx_http_request_t req;
         hx_http_request_init(&req);
         req.method = eng->cfg.http_method;
@@ -214,14 +215,29 @@ static void hx_engine_http_step(hx_engine_t *eng)
             snprintf(req.extra_headers, sizeof(req.extra_headers),
                      "%s", eng->cfg.http_extra_headers);
 
-        hx_u8 buf[2048];
-        hx_u32 len = 0;
-        hx_result_t rc = hx_http_build_request(&req, buf, sizeof(buf), &len);
+        hx_result_t rc = hx_http_build_request(&req, g_http_req_buf,
+                                                 sizeof(g_http_req_buf),
+                                                 &g_http_req_len);
         if (rc != HX_OK)
+            return;
+        g_http_req_built = true;
+    }
+
+    hx_conn_table_t *ct = eng->ct;
+    int sent = 0;
+
+    for (hx_u32 i = 0; i < ct->capacity && sent < 256; i++) {
+        hx_conn_slot_t *s = &ct->slots[i];
+        if (s->state != HX_CONN_SLOT_USED)
             continue;
 
-        /* Send via TCP */
-        rc = hx_tcp_send(conn, buf, len);
+        hx_tcp_conn_t *conn = &s->conn;
+        if (conn->state != HX_TCP_ESTABLISHED ||
+            conn->app_state != HX_APP_HTTP_SEND)
+            continue;
+
+        /* Send pre-built request via TCP */
+        hx_result_t rc = hx_tcp_send(conn, g_http_req_buf, g_http_req_len);
         if (rc == HX_OK) {
             conn->app_state = HX_APP_HTTP_RECV;
             eng->stats.http_req_sent++;
