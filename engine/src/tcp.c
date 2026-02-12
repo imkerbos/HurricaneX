@@ -45,17 +45,17 @@ static hx_u32 hx_tcp_build_segment(const hx_tcp_conn_t *conn,
 
     memset(buf, 0, HX_TCP_HDR_LEN);
 
-    /* Write header fields via memcpy to avoid alignment issues */
+    /* Write header fields in network byte order */
     hx_tcp_hdr_t hdr;
     memset(&hdr, 0, sizeof(hdr));
-    hdr.src_port = conn->src_port;
-    hdr.dst_port = conn->dst_port;
-    hdr.seq      = conn->snd_nxt;
-    hdr.ack      = conn->rcv_nxt;
+    hdr.src_port = hx_htons(conn->src_port);
+    hdr.dst_port = hx_htons(conn->dst_port);
+    hdr.seq      = hx_htonl(conn->snd_nxt);
+    hdr.ack      = hx_htonl(conn->rcv_nxt);
     hdr.data_off = (HX_TCP_HDR_LEN / 4) << 4; /* 5 words, no options */
     hdr.flags    = flags;
-    hdr.window   = conn->rcv_wnd;
-    hdr.checksum = 0; /* offloaded or computed later */
+    hdr.window   = hx_htons(conn->rcv_wnd);
+    hdr.checksum = 0; /* filled after frame construction */
     hdr.urgent   = 0;
     memcpy(buf, &hdr, HX_TCP_HDR_LEN);
 
@@ -109,6 +109,11 @@ static hx_result_t hx_tcp_send_segment(hx_tcp_conn_t *conn,
         return HX_ERR_NOMEM;
     }
 
+    /* Compute and fill TCP checksum */
+    hx_u16 tcp_cksum = hx_tcp_checksum(conn->src_ip, conn->dst_ip,
+                                        tcp_buf, seg_len);
+    memcpy(tcp_buf + 16, &tcp_cksum, 2);
+
     /* Wrap in Ethernet + IPv4 frame */
     hx_u32 frame_len = hx_net_build_frame(conn->src_mac, conn->dst_mac,
                                            conn->src_ip, conn->dst_ip,
@@ -142,6 +147,13 @@ static hx_result_t hx_tcp_parse_header(const hx_pkt_t *pkt,
         return HX_ERR_PROTO;
 
     memcpy(hdr, pkt->data, HX_TCP_HDR_LEN);
+
+    /* Convert from network byte order to host order */
+    hdr->src_port = hx_ntohs(hdr->src_port);
+    hdr->dst_port = hx_ntohs(hdr->dst_port);
+    hdr->seq      = hx_ntohl(hdr->seq);
+    hdr->ack      = hx_ntohl(hdr->ack);
+    hdr->window   = hx_ntohs(hdr->window);
 
     hx_u32 hdr_len = ((hdr->data_off >> 4) & 0x0F) * 4;
     if (hdr_len < HX_TCP_HDR_LEN || hdr_len > pkt->len)

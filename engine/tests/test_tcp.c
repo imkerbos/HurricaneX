@@ -109,14 +109,17 @@ static hx_pkt_t *make_tcp_pkt(hx_u8 *buf, hx_u16 src_port, hx_u16 dst_port,
     static hx_pkt_t pkt;
     memset(buf, 0, HX_TCP_HDR_LEN);
 
-    hx_tcp_hdr_t *hdr = (hx_tcp_hdr_t *)buf;
-    hdr->src_port = src_port;
-    hdr->dst_port = dst_port;
-    hdr->seq      = seq;
-    hdr->ack      = ack;
-    hdr->data_off = (HX_TCP_HDR_LEN / 4) << 4;
-    hdr->flags    = flags;
-    hdr->window   = window;
+    /* Write fields in network byte order (as they appear on the wire) */
+    hx_tcp_hdr_t hdr;
+    memset(&hdr, 0, sizeof(hdr));
+    hdr.src_port = hx_htons(src_port);
+    hdr.dst_port = hx_htons(dst_port);
+    hdr.seq      = hx_htonl(seq);
+    hdr.ack      = hx_htonl(ack);
+    hdr.data_off = (HX_TCP_HDR_LEN / 4) << 4;
+    hdr.flags    = flags;
+    hdr.window   = hx_htons(window);
+    memcpy(buf, &hdr, HX_TCP_HDR_LEN);
 
     if (payload && payload_len > 0)
         memcpy(buf + HX_TCP_HDR_LEN, payload, payload_len);
@@ -426,17 +429,19 @@ static void test_input_frame(void)
     conn.src_ip = 0xC0A80001; /* 192.168.0.1 */
     conn.dst_ip = 0xC0A80002; /* 192.168.0.2 */
 
-    /* Build a SYN+ACK TCP segment */
+    /* Build a SYN+ACK TCP segment in network byte order */
     hx_u8 tcp_seg[HX_TCP_HDR_LEN];
     memset(tcp_seg, 0, sizeof(tcp_seg));
-    hx_tcp_hdr_t *hdr = (hx_tcp_hdr_t *)tcp_seg;
-    hdr->src_port = 80;
-    hdr->dst_port = 12345;
-    hdr->seq      = 5000;
-    hdr->ack      = 1001;
-    hdr->data_off = (HX_TCP_HDR_LEN / 4) << 4;
-    hdr->flags    = HX_TCP_FLAG_SYN | HX_TCP_FLAG_ACK;
-    hdr->window   = 32768;
+    hx_tcp_hdr_t synack_hdr;
+    memset(&synack_hdr, 0, sizeof(synack_hdr));
+    synack_hdr.src_port = hx_htons(80);
+    synack_hdr.dst_port = hx_htons(12345);
+    synack_hdr.seq      = hx_htonl(5000);
+    synack_hdr.ack      = hx_htonl(1001);
+    synack_hdr.data_off = (HX_TCP_HDR_LEN / 4) << 4;
+    synack_hdr.flags    = HX_TCP_FLAG_SYN | HX_TCP_FLAG_ACK;
+    synack_hdr.window   = hx_htons(32768);
+    memcpy(tcp_seg, &synack_hdr, HX_TCP_HDR_LEN);
 
     /* Wrap in Eth+IP frame */
     hx_u8 src_mac[6] = {0xAA, 0xBB, 0xCC, 0x01, 0x02, 0x03};
