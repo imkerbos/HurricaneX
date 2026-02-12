@@ -183,16 +183,16 @@ int main(int argc, char **argv)
 {
     printf("=== HurricaneX L7 HTTP Benchmark ===\n");
 
-    /* Split EAL / app args */
+    /* Split EAL / app args — copy app args before EAL modifies argv */
     int eal_argc = argc;
     int app_argc = 0;
-    char **app_argv = NULL;
+    char *app_args[64]; /* copied pointers */
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--") == 0) {
             eal_argc = i;
-            app_argc = argc - i - 1;
-            app_argv = &argv[i + 1];
+            for (int j = i + 1; j < argc && app_argc < 64; j++)
+                app_args[app_argc++] = strdup(argv[j]);
             break;
         }
     }
@@ -221,24 +221,24 @@ int main(int argc, char **argv)
     int headers_off = 0; /* offset into http_extra_headers */
 
     for (int i = 0; i < app_argc; i++) {
-        if (strcmp(app_argv[i], "-m") == 0 && i + 1 < app_argc) {
-            if (parse_mac(app_argv[++i], cfg.dst_mac) != 0) {
-                fprintf(stderr, "FAIL: invalid MAC '%s'\n", app_argv[i]);
+        if (strcmp(app_args[i], "-m") == 0 && i + 1 < app_argc) {
+            if (parse_mac(app_args[++i], cfg.dst_mac) != 0) {
+                fprintf(stderr, "FAIL: invalid MAC '%s'\n", app_args[i]);
                 return 1;
             }
             got_mac = 1;
-        } else if (strcmp(app_argv[i], "-s") == 0 && i + 1 < app_argc) {
-            if (parse_ipv4(app_argv[++i], &cfg.src_ip) != 0) {
-                fprintf(stderr, "FAIL: invalid src_ip '%s'\n", app_argv[i]);
+        } else if (strcmp(app_args[i], "-s") == 0 && i + 1 < app_argc) {
+            if (parse_ipv4(app_args[++i], &cfg.src_ip) != 0) {
+                fprintf(stderr, "FAIL: invalid src_ip '%s'\n", app_args[i]);
                 return 1;
             }
             got_src = 1;
-        } else if (strcmp(app_argv[i], "-u") == 0 && i + 1 < app_argc) {
+        } else if (strcmp(app_args[i], "-u") == 0 && i + 1 < app_argc) {
             char host[256];
-            if (parse_url(app_argv[++i], host, sizeof(host),
+            if (parse_url(app_args[++i], host, sizeof(host),
                           &cfg.dst_port, cfg.http_path,
                           sizeof(cfg.http_path)) != 0) {
-                fprintf(stderr, "FAIL: invalid URL '%s'\n", app_argv[i]);
+                fprintf(stderr, "FAIL: invalid URL '%s'\n", app_args[i]);
                 return 1;
             }
             /* Resolve host to IP */
@@ -249,19 +249,19 @@ int main(int argc, char **argv)
             /* Set Host header */
             snprintf(cfg.http_host, sizeof(cfg.http_host), "%s", host);
             got_url = 1;
-        } else if (strcmp(app_argv[i], "-H") == 0 && i + 1 < app_argc) {
+        } else if (strcmp(app_args[i], "-H") == 0 && i + 1 < app_argc) {
             i++;
             int w = snprintf(cfg.http_extra_headers + headers_off,
                              sizeof(cfg.http_extra_headers) - headers_off,
-                             "%s\r\n", app_argv[i]);
+                             "%s\r\n", app_args[i]);
             if (w > 0)
                 headers_off += w;
-        } else if (strcmp(app_argv[i], "-n") == 0 && i + 1 < app_argc) {
-            cfg.num_conns = (hx_u32)atoi(app_argv[++i]);
-        } else if (strcmp(app_argv[i], "-d") == 0 && i + 1 < app_argc) {
-            cfg.duration_sec = (hx_u32)atoi(app_argv[++i]);
+        } else if (strcmp(app_args[i], "-n") == 0 && i + 1 < app_argc) {
+            cfg.num_conns = (hx_u32)atoi(app_args[++i]);
+        } else if (strcmp(app_args[i], "-d") == 0 && i + 1 < app_argc) {
+            cfg.duration_sec = (hx_u32)atoi(app_args[++i]);
         } else {
-            fprintf(stderr, "Unknown option: %s\n", app_argv[i]);
+            fprintf(stderr, "Unknown option: %s\n", app_args[i]);
             print_usage(argv[0]);
             return 1;
         }
