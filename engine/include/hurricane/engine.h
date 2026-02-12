@@ -5,6 +5,7 @@
 #include "pktio.h"
 #include "conn_table.h"
 #include "net.h"
+#include "http.h"
 
 /*
  * Engine — drives the RX/TX main loop and connection lifecycle.
@@ -23,6 +24,12 @@ typedef struct hx_engine_config {
     hx_u32  duration_sec;    /* test duration in seconds (0 = until all done) */
     hx_u8   src_mac[6];
     hx_u8   dst_mac[6];
+
+    /* HTTP mode (L7) */
+    bool    http_enabled;    /* true = send HTTP request after handshake */
+    char    http_host[256];  /* Host header value */
+    char    http_path[1024]; /* Request path (default "/") */
+    hx_http_method_t http_method; /* GET, POST, etc */
 } hx_engine_config_t;
 
 /* Engine statistics */
@@ -33,6 +40,10 @@ typedef struct hx_engine_stats {
     hx_u64  conns_failed;
     hx_u64  conns_reset;
     hx_u64  conns_retransmit;
+    hx_u64  http_req_sent;
+    hx_u64  http_resp_recv;
+    hx_u64  http_resp_2xx;
+    hx_u64  http_resp_other;
     hx_u64  pkts_tx;
     hx_u64  pkts_rx;
     hx_u64  rx_loop_iters;

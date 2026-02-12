@@ -60,3 +60,8 @@ executable('smoke_tx', 'smoke_tx.c',
 executable('bench_l4', 'bench_l4.c',
   dependencies : libhurricane_dep,
 )
+
+# L7 HTTP benchmark — DPDK HTTP request test
+executable('bench_http', 'bench_http.c',
+  dependencies : libhurricane_dep,
+)

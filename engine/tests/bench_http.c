@@ -1,14 +1,15 @@
 /*
- * L4 TCP benchmark — DPDK-based TCP handshake test.
+ * L7 HTTP benchmark — DPDK-based HTTP request test.
  *
- * Creates N connections to a target, completes 3-way handshake,
- * then closes. Measures CPS (connections per second).
+ * Creates N connections to a target, completes TCP handshake,
+ * sends HTTP GET, receives response, then closes.
+ * Measures HTTP RPS (requests per second).
  *
  * Usage:
- *   ./bench_l4 --lcores 0 -a <PCI> -- <dst_mac> <src_ip> <dst_ip> [dst_port] [num_conns] [duration_sec]
+ *   ./bench_http --lcores 0 -a <PCI> -- <dst_mac> <src_ip> <dst_ip> [dst_port] [num_conns] [duration_sec] [path]
  *
  * Example:
- *   ./bench_l4 --lcores 0 -a 7f:00.0 -- 06:bd:69:51:fc:e5 172.31.34.0 172.31.36.171 80 100 10
+ *   ./bench_http --lcores 0 -a 7f:00.0 -- 06:bd:69:51:fc:e5 172.31.34.0 172.31.36.171 8080 100 10 /
  */
 #ifdef HX_USE_DPDK
 
@@ -55,9 +56,17 @@ static void print_stats(const hx_engine_stats_t *s)
     printf("  reset:         %llu\n", (unsigned long long)s->conns_reset);
     printf("  failed:        %llu\n", (unsigned long long)s->conns_failed);
     printf("  retransmit:    %llu\n", (unsigned long long)s->conns_retransmit);
+    printf("  http_req:      %llu\n", (unsigned long long)s->http_req_sent);
+    printf("  http_resp:     %llu\n", (unsigned long long)s->http_resp_recv);
+    printf("  http_2xx:      %llu\n", (unsigned long long)s->http_resp_2xx);
+    printf("  http_other:    %llu\n", (unsigned long long)s->http_resp_other);
     printf("  pkts_tx:       %llu\n", (unsigned long long)s->pkts_tx);
     printf("  pkts_rx:       %llu\n", (unsigned long long)s->pkts_rx);
     printf("  rx_loop_iters: %llu\n", (unsigned long long)s->rx_loop_iters);
+    if (s->elapsed_sec > 0 && s->http_resp_recv > 0) {
+        printf("  RPS:           %.0f\n",
+               (double)s->http_resp_recv / s->elapsed_sec);
+    }
     if (s->elapsed_sec > 0 && s->conns_established > 0) {
         printf("  CPS:           %.0f\n",
                (double)s->conns_established / s->elapsed_sec);
@@ -66,7 +75,7 @@ static void print_stats(const hx_engine_stats_t *s)
 
 int main(int argc, char **argv)
 {
-    printf("=== HurricaneX L4 TCP Benchmark ===\n");
+    printf("=== HurricaneX L7 HTTP Benchmark ===\n");
 
     /* Split EAL / app args */
     int eal_argc = argc;
@@ -93,18 +102,20 @@ int main(int argc, char **argv)
     /* Parse app args */
     if (app_argc < 3) {
         fprintf(stderr, "Usage: %s <EAL args> -- <dst_mac> <src_ip> <dst_ip>"
-                        " [dst_port] [num_conns] [duration_sec]\n", argv[0]);
+                        " [dst_port] [num_conns] [duration_sec] [path]\n", argv[0]);
         return 1;
     }
 
     hx_engine_config_t cfg;
     memset(&cfg, 0, sizeof(cfg));
-    /* Randomize src_port_base to avoid kernel connection residue from prior runs */
     srand((unsigned)time(NULL));
     cfg.src_port_base = (hx_u16)(10000 + (rand() % 40000));
-    cfg.dst_port = 80;
+    cfg.dst_port = 8080;
     cfg.num_conns = 10;
     cfg.duration_sec = 10;
+    cfg.http_enabled = true;
+    cfg.http_method = HX_HTTP_GET;
+    snprintf(cfg.http_path, sizeof(cfg.http_path), "/");
 
     if (parse_mac(app_argv[0], cfg.dst_mac) != 0) {
         fprintf(stderr, "FAIL: invalid dst_mac '%s'\n", app_argv[0]);
@@ -124,6 +135,13 @@ int main(int argc, char **argv)
         cfg.num_conns = (hx_u32)atoi(app_argv[4]);
     if (app_argc >= 6)
         cfg.duration_sec = (hx_u32)atoi(app_argv[5]);
+    if (app_argc >= 7)
+        snprintf(cfg.http_path, sizeof(cfg.http_path), "%s", app_argv[6]);
+
+    /* Build Host header from dst_ip:dst_port */
+    snprintf(cfg.http_host, sizeof(cfg.http_host), "%u.%u.%u.%u:%u",
+             (cfg.dst_ip >> 24) & 0xFF, (cfg.dst_ip >> 16) & 0xFF,
+             (cfg.dst_ip >> 8) & 0xFF, cfg.dst_ip & 0xFF, cfg.dst_port);
 
     printf("  dst_mac:    %02x:%02x:%02x:%02x:%02x:%02x\n",
            cfg.dst_mac[0], cfg.dst_mac[1], cfg.dst_mac[2],
@@ -139,6 +157,7 @@ int main(int argc, char **argv)
            cfg.src_port_base + cfg.num_conns - 1);
     printf("  num_conns:  %u\n", cfg.num_conns);
     printf("  duration:   %u sec\n", cfg.duration_sec);
+    printf("  http_path:  %s\n", cfg.http_path);
 
     /* Mempool + pktio */
     hx_mempool_t *mp = hx_mempool_create("bench", 256, 2048);
@@ -174,7 +193,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf("\nStarting benchmark...\n");
+    printf("\nStarting HTTP benchmark...\n");
     rc = hx_engine_start(&eng);
     if (rc != HX_OK) {
         fprintf(stderr, "FAIL: hx_engine_start: %s\n", hx_strerror(rc));

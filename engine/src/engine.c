@@ -1,5 +1,7 @@
 #include "hurricane/engine.h"
+#include "hurricane/http.h"
 #include "hurricane/log.h"
+#include <stdio.h>
 #include <string.h>
 #include <time.h>
 
@@ -174,6 +176,60 @@ void hx_engine_retransmit_step(hx_engine_t *eng, double now)
     }
 }
 
+/* --- HTTP request sending ---------------------------------------------- */
+
+static void hx_engine_http_step(hx_engine_t *eng)
+{
+    if (!eng || !eng->ct || !eng->cfg.http_enabled)
+        return;
+
+    hx_conn_table_t *ct = eng->ct;
+    int sent = 0;
+
+    for (hx_u32 i = 0; i < ct->capacity && sent < 64; i++) {
+        hx_conn_slot_t *s = &ct->slots[i];
+        if (s->state != HX_CONN_SLOT_USED)
+            continue;
+
+        hx_tcp_conn_t *conn = &s->conn;
+        if (conn->state != HX_TCP_ESTABLISHED ||
+            conn->app_state != HX_APP_HTTP_SEND)
+            continue;
+
+        /* Build HTTP request */
+        hx_http_request_t req;
+        hx_http_request_init(&req);
+        req.method = eng->cfg.http_method;
+        if (eng->cfg.http_host[0])
+            snprintf(req.host, sizeof(req.host), "%s", eng->cfg.http_host);
+        else
+            snprintf(req.host, sizeof(req.host), "%u.%u.%u.%u",
+                     (eng->cfg.dst_ip >> 24) & 0xFF,
+                     (eng->cfg.dst_ip >> 16) & 0xFF,
+                     (eng->cfg.dst_ip >> 8) & 0xFF,
+                     eng->cfg.dst_ip & 0xFF);
+        if (eng->cfg.http_path[0])
+            snprintf(req.path, sizeof(req.path), "%s", eng->cfg.http_path);
+
+        hx_u8 buf[2048];
+        hx_u32 len = 0;
+        hx_result_t rc = hx_http_build_request(&req, buf, sizeof(buf), &len);
+        if (rc != HX_OK)
+            continue;
+
+        /* Send via TCP */
+        rc = hx_tcp_send(conn, buf, len);
+        if (rc == HX_OK) {
+            conn->app_state = HX_APP_HTTP_RECV;
+            eng->stats.http_req_sent++;
+            eng->stats.pkts_tx++;
+            sent++;
+        } else if (rc == HX_ERR_AGAIN || rc == HX_ERR_NOMEM) {
+            break; /* TX backpressure */
+        }
+    }
+}
+
 /* --- Start: prepare engine, don't burst all SYNs ----------------------- */
 
 hx_result_t hx_engine_start(hx_engine_t *eng)
@@ -214,11 +270,6 @@ int hx_engine_rx_step(hx_engine_t *eng)
                                              &src_ip, &dst_ip,
                                              &tcp_seg, &tcp_len);
         if (rc != HX_OK || tcp_len < HX_TCP_HDR_LEN) {
-            if (eng->stats.pkts_rx <= 5) {
-                HX_LOG_WARN(HX_LOG_COMP_ENGINE,
-                            "rx: parse_frame failed: rc=%d pkt_len=%u tcp_len=%u",
-                            (int)rc, pkt->len, tcp_len);
-            }
             hx_pktio_free_pkt(eng->pktio, pkt);
             continue;
         }
@@ -240,19 +291,6 @@ int hx_engine_rx_step(hx_engine_t *eng)
             eng->ct, dst_ip, tcp_dport, src_ip, tcp_sport);
 
         if (!conn) {
-            HX_LOG_WARN(HX_LOG_COMP_ENGINE,
-                        "rx: no conn for %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u "
-                        "(lookup: src=%u.%u.%u.%u:%u dst=%u.%u.%u.%u:%u) "
-                        "ct_count=%u",
-                        (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
-                        (src_ip >> 8) & 0xFF, src_ip & 0xFF, tcp_sport,
-                        (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
-                        (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, tcp_dport,
-                        (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
-                        (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, tcp_dport,
-                        (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
-                        (src_ip >> 8) & 0xFF, src_ip & 0xFF, tcp_sport,
-                        hx_conn_table_count(eng->ct));
             hx_pktio_free_pkt(eng->pktio, pkt);
             continue;
         }
@@ -268,29 +306,47 @@ int hx_engine_rx_step(hx_engine_t *eng)
         };
         rc = hx_tcp_input(conn, &tcp_pkt);
 
-        /* Debug: log first few state transitions */
-        if (eng->stats.pkts_rx <= 5) {
-            hx_u8 rx_flags = 0;
-            if (tcp_len >= HX_TCP_HDR_LEN)
-                rx_flags = tcp_seg[13]; /* flags byte in TCP header */
-            HX_LOG_INFO(HX_LOG_COMP_ENGINE,
-                        "rx: conn %u.%u.%u.%u:%u flags=0x%02x "
-                        "prev_state=%s new_state=%s rc=%d "
-                        "snd_nxt=%u snd_una=%u",
-                        (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
-                        (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, tcp_dport,
-                        rx_flags,
-                        hx_tcp_state_str(prev_state),
-                        hx_tcp_state_str(conn->state),
-                        (int)rc,
-                        conn->snd_nxt, conn->snd_una);
-        }
-
         /* Track state transitions */
         if (conn->state == HX_TCP_ESTABLISHED &&
             prev_state != HX_TCP_ESTABLISHED) {
             eng->stats.conns_established++;
+            /* If HTTP mode, mark connection for HTTP request */
+            if (eng->cfg.http_enabled)
+                conn->app_state = HX_APP_HTTP_SEND;
         }
+
+        /*
+         * HTTP response handling: when we receive data on an ESTABLISHED
+         * connection that's waiting for an HTTP response, parse it.
+         */
+        if (eng->cfg.http_enabled &&
+            conn->state == HX_TCP_ESTABLISHED &&
+            conn->app_state == HX_APP_HTTP_RECV) {
+            /* Extract TCP payload from the segment */
+            hx_u32 tcp_hdr_len = ((tcp_seg[12] >> 4) & 0x0F) * 4;
+            if (tcp_len > tcp_hdr_len) {
+                const hx_u8 *payload = tcp_seg + tcp_hdr_len;
+                hx_u32 payload_len = tcp_len - tcp_hdr_len;
+
+                hx_http_response_t resp;
+                hx_result_t hrc = hx_http_parse_response(payload, payload_len, &resp);
+                if (hrc == HX_OK) {
+                    eng->stats.http_resp_recv++;
+                    if (resp.status_code >= 200 && resp.status_code < 300)
+                        eng->stats.http_resp_2xx++;
+                    else
+                        eng->stats.http_resp_other++;
+
+                    /* Response received — close connection */
+                    conn->app_state = HX_APP_HTTP_DONE;
+                    hx_tcp_close(conn);
+                    eng->stats.pkts_tx++;
+                }
+                /* If HX_ERR_AGAIN, wait for more data (simplified: we don't
+                 * reassemble across packets in Phase 1) */
+            }
+        }
+
         if (conn->state == HX_TCP_CLOSED) {
             if (rc == HX_ERR_CONNRESET)
                 eng->stats.conns_reset++;
@@ -333,17 +389,30 @@ hx_result_t hx_engine_run(hx_engine_t *eng)
         /* Phase 2: process incoming packets */
         hx_engine_rx_step(eng);
 
-        /* Phase 3: retransmit SYNs (check every 0.5s to avoid overhead) */
+        /* Phase 3: send HTTP requests for newly established connections */
+        if (eng->cfg.http_enabled)
+            hx_engine_http_step(eng);
+
+        /* Phase 4: retransmit SYNs (check every 0.5s to avoid overhead) */
         if (now - last_retransmit >= 0.5) {
             hx_engine_retransmit_step(eng, now);
             last_retransmit = now;
         }
 
         /* Check termination: all connections resolved */
-        hx_u64 done = eng->stats.conns_established +
-                       eng->stats.conns_closed +
-                       eng->stats.conns_reset +
-                       eng->stats.conns_failed;
+        hx_u64 done;
+        if (eng->cfg.http_enabled) {
+            /* HTTP mode: done = closed + reset + failed (not just established) */
+            done = eng->stats.conns_closed +
+                   eng->stats.conns_reset +
+                   eng->stats.conns_failed;
+        } else {
+            /* L4 mode: established counts as done */
+            done = eng->stats.conns_established +
+                   eng->stats.conns_closed +
+                   eng->stats.conns_reset +
+                   eng->stats.conns_failed;
+        }
         if (eng->conn_create_idx >= eng->cfg.num_conns && done >= eng->stats.conns_attempted)
             break;
 

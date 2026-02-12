@@ -25,6 +25,14 @@ typedef enum {
     HX_TCP_LAST_ACK,
 } hx_tcp_state_t;
 
+/* Per-connection application-layer state (used by engine) */
+typedef enum {
+    HX_APP_NONE = 0,       /* L4-only mode, no app layer */
+    HX_APP_HTTP_SEND,      /* TCP established, need to send HTTP request */
+    HX_APP_HTTP_RECV,      /* HTTP request sent, waiting for response */
+    HX_APP_HTTP_DONE,      /* HTTP response received, ready to close */
+} hx_app_state_t;
+
 /* TCP connection control block */
 typedef struct hx_tcp_conn {
     hx_tcp_state_t state;
@@ -56,6 +64,9 @@ typedef struct hx_tcp_conn {
     /* Retransmit tracking (used by engine for SYN retry) */
     double  last_send_ts;  /* monotonic timestamp of last SYN/FIN send */
     hx_u8   retries;       /* number of retransmit attempts */
+
+    /* Application-layer state (used by engine for HTTP etc) */
+    hx_app_state_t app_state;
 } hx_tcp_conn_t;
 
 /* Initialize a TCP connection (sets state to CLOSED) */
