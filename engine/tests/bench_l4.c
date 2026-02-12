@@ -53,6 +53,7 @@ static void print_stats(const hx_engine_stats_t *s)
     printf("  closed:        %llu\n", (unsigned long long)s->conns_closed);
     printf("  reset:         %llu\n", (unsigned long long)s->conns_reset);
     printf("  failed:        %llu\n", (unsigned long long)s->conns_failed);
+    printf("  retransmit:    %llu\n", (unsigned long long)s->conns_retransmit);
     printf("  pkts_tx:       %llu\n", (unsigned long long)s->pkts_tx);
     printf("  pkts_rx:       %llu\n", (unsigned long long)s->pkts_rx);
     printf("  rx_loop_iters: %llu\n", (unsigned long long)s->rx_loop_iters);

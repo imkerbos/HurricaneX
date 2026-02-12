@@ -13,7 +13,7 @@
 #define HX_LOG_COMP_DPDK_IO "pktio.dpdk"
 
 /* Per-port mbuf pool sizing */
-#define DPDK_NUM_MBUFS      8191
+#define DPDK_NUM_MBUFS      65535
 #define DPDK_MBUF_CACHE_SZ  250
 
 /* RX/TX descriptor ring sizes */

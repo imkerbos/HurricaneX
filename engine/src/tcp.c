@@ -224,6 +224,32 @@ hx_result_t hx_tcp_connect(hx_tcp_conn_t *conn,
     return HX_OK;
 }
 
+hx_result_t hx_tcp_retransmit_syn(hx_tcp_conn_t *conn)
+{
+    if (!conn)
+        return HX_ERR_INVAL;
+    if (conn->state != HX_TCP_SYN_SENT)
+        return HX_ERR_INVAL;
+
+    /*
+     * Rewind snd_nxt to the original ISN (snd_una) so the SYN
+     * carries the same sequence number. The peer's SYN-ACK will
+     * ack ISN+1 which matches our snd_nxt after re-advance.
+     */
+    conn->snd_nxt = conn->snd_una;
+
+    if (conn->pktio) {
+        hx_result_t rc = hx_tcp_send_segment(conn, HX_TCP_FLAG_SYN, NULL, 0);
+        if (rc != HX_OK) {
+            conn->snd_nxt = conn->snd_una + 1; /* restore */
+            return rc;
+        }
+    }
+
+    conn->snd_nxt = conn->snd_una + 1; /* SYN consumes 1 seq */
+    return HX_OK;
+}
+
 hx_result_t hx_tcp_send(hx_tcp_conn_t *conn,
                          const hx_u8 *data, hx_u32 len)
 {

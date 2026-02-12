@@ -32,6 +32,7 @@ typedef struct hx_engine_stats {
     hx_u64  conns_closed;
     hx_u64  conns_failed;
     hx_u64  conns_reset;
+    hx_u64  conns_retransmit;
     hx_u64  pkts_tx;
     hx_u64  pkts_rx;
     hx_u64  rx_loop_iters;
@@ -45,6 +46,10 @@ typedef struct hx_engine {
     hx_engine_config_t  cfg;
     hx_engine_stats_t   stats;
     bool                 running;
+
+    /* Incremental connection creation state */
+    hx_u32              conn_create_idx;   /* next connection index to create */
+    hx_u32              conn_create_batch; /* conns to create per main-loop iter */
 } hx_engine_t;
 
 /* Initialize engine with pktio and config. */
@@ -53,6 +58,20 @@ hx_result_t hx_engine_init(hx_engine_t *eng, hx_pktio_t *pktio,
 
 /* Create all connections and send SYNs. */
 hx_result_t hx_engine_start(hx_engine_t *eng);
+
+/*
+ * Create a batch of connections (incremental).
+ * Called from the main loop to avoid burst-all-at-once.
+ * Returns number of new connections created this step.
+ */
+int hx_engine_connect_step(hx_engine_t *eng);
+
+/*
+ * Retransmit SYNs for connections stuck in SYN_SENT.
+ * Scans the connection table and resends SYN for entries
+ * that have been waiting longer than the retransmit timeout.
+ */
+void hx_engine_retransmit_step(hx_engine_t *eng, double now);
 
 /*
  * Run one iteration of the RX loop:

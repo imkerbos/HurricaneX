@@ -485,6 +485,40 @@ static void test_input_frame_bad(void)
     printf("  PASS: test_input_frame_bad\n");
 }
 
+static void test_retransmit_syn(void)
+{
+    hx_tcp_conn_t conn;
+    hx_tcp_init(&conn, NULL);
+
+    /* Retransmit from non-SYN_SENT should fail */
+    assert(hx_tcp_retransmit_syn(&conn) == HX_ERR_INVAL);
+
+    /* Connect to move to SYN_SENT */
+    hx_tcp_connect(&conn, 0x7F000001, 80);
+    assert(conn.state == HX_TCP_SYN_SENT);
+
+    hx_u32 original_isn = conn.snd_una;
+    hx_u32 original_nxt = conn.snd_nxt;
+    assert(original_nxt == original_isn + 1);
+
+    /* Retransmit — should preserve ISN */
+    assert(hx_tcp_retransmit_syn(&conn) == HX_OK);
+    assert(conn.state == HX_TCP_SYN_SENT);
+    assert(conn.snd_una == original_isn);
+    assert(conn.snd_nxt == original_isn + 1);
+
+    /* SYN-ACK with original ISN+1 should still work */
+    hx_u8 pkt_buf[HX_MAX_PKT_SIZE];
+    hx_pkt_t *syn_ack = make_tcp_pkt(pkt_buf, 80, 12345,
+                                       5000, original_isn + 1,
+                                       HX_TCP_FLAG_SYN | HX_TCP_FLAG_ACK,
+                                       32768, NULL, 0);
+    assert(hx_tcp_input(&conn, syn_ack) == HX_OK);
+    assert(conn.state == HX_TCP_ESTABLISHED);
+
+    printf("  PASS: test_retransmit_syn\n");
+}
+
 int main(void)
 {
     printf("test_tcp:\n");
@@ -514,6 +548,9 @@ int main(void)
     /* Frame-based input */
     test_input_frame();
     test_input_frame_bad();
+
+    /* Retransmit */
+    test_retransmit_syn();
 
     printf("All TCP tests passed.\n");
     return 0;

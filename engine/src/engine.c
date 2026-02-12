@@ -5,6 +5,13 @@
 
 #define HX_LOG_COMP_ENGINE "engine"
 
+/* SYN retransmit parameters */
+#define HX_SYN_RETRANSMIT_SEC  1.0   /* retry after 1 second */
+#define HX_SYN_MAX_RETRIES     3     /* give up after 3 retries */
+
+/* Default batch size: create this many connections per main-loop iteration */
+#define HX_CONNECT_BATCH_DEFAULT 64
+
 /* --- Time helpers ------------------------------------------------------ */
 
 static double now_sec(void)
@@ -28,6 +35,8 @@ hx_result_t hx_engine_init(hx_engine_t *eng, hx_pktio_t *pktio,
     eng->pktio = pktio;
     eng->cfg = *cfg;
     eng->running = false;
+    eng->conn_create_idx = 0;
+    eng->conn_create_batch = HX_CONNECT_BATCH_DEFAULT;
 
     /* Create connection table (2x capacity for headroom) */
     hx_u32 ct_cap = cfg->num_conns * 2;
@@ -50,16 +59,22 @@ void hx_engine_cleanup(hx_engine_t *eng)
     }
 }
 
-/* --- Start: create connections and send SYNs --------------------------- */
+/* --- Incremental connection creation ----------------------------------- */
 
-hx_result_t hx_engine_start(hx_engine_t *eng)
+int hx_engine_connect_step(hx_engine_t *eng)
 {
     if (!eng || !eng->ct || !eng->pktio)
-        return HX_ERR_INVAL;
+        return 0;
 
     const hx_engine_config_t *cfg = &eng->cfg;
+    int created = 0;
+    double ts = now_sec();
 
-    for (hx_u32 i = 0; i < cfg->num_conns; i++) {
+    hx_u32 end = eng->conn_create_idx + eng->conn_create_batch;
+    if (end > cfg->num_conns)
+        end = cfg->num_conns;
+
+    for (hx_u32 i = eng->conn_create_idx; i < end; i++) {
         hx_u16 sport = cfg->src_port_base + (hx_u16)i;
 
         hx_tcp_conn_t *conn = hx_conn_table_insert(
@@ -77,8 +92,12 @@ hx_result_t hx_engine_start(hx_engine_t *eng)
 
         hx_result_t rc = hx_tcp_connect(conn, cfg->dst_ip, cfg->dst_port);
         eng->stats.conns_attempted++;
+
         if (rc == HX_OK) {
+            conn->last_send_ts = ts;
+            conn->retries = 0;
             eng->stats.pkts_tx++;
+            created++;
         } else {
             eng->stats.conns_failed++;
             HX_LOG_WARN(HX_LOG_COMP_ENGINE,
@@ -87,12 +106,64 @@ hx_result_t hx_engine_start(hx_engine_t *eng)
         }
     }
 
+    eng->conn_create_idx = end;
+    return created;
+}
+
+/* --- SYN retransmit ---------------------------------------------------- */
+
+void hx_engine_retransmit_step(hx_engine_t *eng, double now)
+{
+    if (!eng || !eng->ct)
+        return;
+
+    hx_conn_table_t *ct = eng->ct;
+
+    for (hx_u32 i = 0; i < ct->capacity; i++) {
+        hx_conn_slot_t *s = &ct->slots[i];
+        if (s->state != HX_CONN_SLOT_USED)
+            continue;
+
+        hx_tcp_conn_t *conn = &s->conn;
+        if (conn->state != HX_TCP_SYN_SENT)
+            continue;
+
+        /* Check if retransmit timeout elapsed */
+        double elapsed = now - conn->last_send_ts;
+        if (elapsed < HX_SYN_RETRANSMIT_SEC)
+            continue;
+
+        if (conn->retries >= HX_SYN_MAX_RETRIES) {
+            /* Give up — mark as failed */
+            conn->state = HX_TCP_CLOSED;
+            eng->stats.conns_failed++;
+            continue;
+        }
+
+        /* Retransmit SYN with original ISN */
+        hx_result_t rc = hx_tcp_retransmit_syn(conn);
+        if (rc == HX_OK) {
+            conn->last_send_ts = now;
+            conn->retries++;
+            eng->stats.conns_retransmit++;
+            eng->stats.pkts_tx++;
+        }
+    }
+}
+
+/* --- Start: prepare engine, don't burst all SYNs ----------------------- */
+
+hx_result_t hx_engine_start(hx_engine_t *eng)
+{
+    if (!eng || !eng->ct || !eng->pktio)
+        return HX_ERR_INVAL;
+
+    eng->conn_create_idx = 0;
     eng->running = true;
 
     HX_LOG_INFO(HX_LOG_COMP_ENGINE,
-                "started: %llu conns attempted, %llu SYNs sent",
-                (unsigned long long)eng->stats.conns_attempted,
-                (unsigned long long)eng->stats.pkts_tx);
+                "engine started: %u conns planned, batch size %u",
+                eng->cfg.num_conns, eng->conn_create_batch);
 
     return HX_OK;
 }
@@ -191,19 +262,34 @@ hx_result_t hx_engine_run(hx_engine_t *eng)
     if (eng->cfg.duration_sec > 0)
         deadline = start + (double)eng->cfg.duration_sec;
 
+    double last_retransmit = start;
+
     while (eng->running) {
+        double now = now_sec();
+
+        /* Phase 1: create connections incrementally */
+        if (eng->conn_create_idx < eng->cfg.num_conns)
+            hx_engine_connect_step(eng);
+
+        /* Phase 2: process incoming packets */
         hx_engine_rx_step(eng);
 
-        /* Check termination: all connections done */
+        /* Phase 3: retransmit SYNs (check every 0.5s to avoid overhead) */
+        if (now - last_retransmit >= 0.5) {
+            hx_engine_retransmit_step(eng, now);
+            last_retransmit = now;
+        }
+
+        /* Check termination: all connections resolved */
         hx_u64 done = eng->stats.conns_established +
                        eng->stats.conns_closed +
                        eng->stats.conns_reset +
                        eng->stats.conns_failed;
-        if (done >= eng->stats.conns_attempted)
+        if (eng->conn_create_idx >= eng->cfg.num_conns && done >= eng->stats.conns_attempted)
             break;
 
         /* Check timeout */
-        if (deadline > 0 && now_sec() >= deadline)
+        if (deadline > 0 && now >= deadline)
             break;
     }
 

@@ -52,6 +52,10 @@ typedef struct hx_tcp_conn {
     /* L2 addressing for frame construction */
     hx_u8   src_mac[6];
     hx_u8   dst_mac[6];   /* gateway/peer MAC */
+
+    /* Retransmit tracking (used by engine for SYN retry) */
+    double  last_send_ts;  /* monotonic timestamp of last SYN/FIN send */
+    hx_u8   retries;       /* number of retransmit attempts */
 } hx_tcp_conn_t;
 
 /* Initialize a TCP connection (sets state to CLOSED) */
@@ -60,6 +64,13 @@ hx_result_t hx_tcp_init(hx_tcp_conn_t *conn, hx_pktio_t *pktio);
 /* Initiate active open (send SYN) */
 hx_result_t hx_tcp_connect(hx_tcp_conn_t *conn,
                             hx_u32 dst_ip, hx_u16 dst_port);
+
+/*
+ * Retransmit SYN for a connection in SYN_SENT state.
+ * Preserves the original ISN (snd_una) so the peer's SYN-ACK
+ * will still match. Returns HX_ERR_INVAL if state != SYN_SENT.
+ */
+hx_result_t hx_tcp_retransmit_syn(hx_tcp_conn_t *conn);
 
 /* Send data on an established connection */
 hx_result_t hx_tcp_send(hx_tcp_conn_t *conn,
