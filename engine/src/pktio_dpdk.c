@@ -151,10 +151,8 @@ static hx_result_t dpdk_init(hx_pktio_t *io, const char *dev,
                 dev_info.max_rx_queues, dev_info.max_tx_queues,
                 dev_info.tx_desc_lim.nb_min, dev_info.tx_desc_lim.nb_max);
 
-    /* Setup TX queue with aggressive free threshold */
-    struct rte_eth_txconf tx_conf = dev_info.default_txconf;
-    tx_conf.tx_free_thresh = 16;  /* reclaim descriptors more aggressively */
-    ret = rte_eth_tx_queue_setup(port_id, 0, DPDK_TX_DESC, socket_id, &tx_conf);
+    /* Setup TX queue with device defaults */
+    ret = rte_eth_tx_queue_setup(port_id, 0, DPDK_TX_DESC, socket_id, NULL);
     if (ret < 0) {
         HX_LOG_ERROR(HX_LOG_COMP_DPDK_IO,
                      "rte_eth_tx_queue_setup failed for port %u: %d",
