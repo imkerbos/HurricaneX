@@ -1,24 +1,22 @@
 # 🌪 流量飓风（HurricaneX）
 
-> 下一代基于 DPDK 的分布式 L7 高强度流量仿真与攻防验证平台
+> 基于 AF_XDP 的分布式 L7 高性能流量仿真与攻防验证平台
 
 ---
 
 ## 📖 项目简介
 
-流量飓风是一款面向 CDN / WAF / 高防系统 / 负载均衡设备 的超高性能流量生成与攻防验证平台。
+流量飓风是一款面向 CDN / WAF / 高防系统 / 负载均衡设备的超高性能流量生成与攻防验证平台。
 
-项目设计灵感来源于 dperf，并在其高性能 L4 架构基础上进行扩展与升级，构建面向 L7 场景的分布式攻防仿真系统。
+项目设计灵感来源于 dperf，在其高性能 L4 架构基础上扩展升级，构建面向 L7 场景的分布式攻防仿真系统。采用 AF_XDP 内核旁路技术，无需 DPDK 即可在普通云服务器上实现高性能收发包。
 
-相比传统 L4 压测工具，流量飓风专注于：
+核心能力：
 
 - 域名级 HTTP/HTTPS 测试
 - TLS 握手压力模型
 - CC 行为仿真
 - 分布式节点池调度
 - 超大规模并发连接模拟
-
-目标构建一个真正用于防御验证与攻防实验的基础设施级平台。
 
 ---
 
@@ -28,38 +26,10 @@
 |------|--------|------|
 | HTTP CPS | 待测试验证 | L7 层含协议解析开销，以实测为准 |
 | HTTPS CPS | 待测试验证 | TLS 握手开销显著，需单独评估 |
-| 吞吐能力 | 100–400 Gbps | 取决于硬件配置 |
-| 单节点并发连接 | 1亿+ | 需配合 hugepage 内存规划 |
+| 单核 PPS | 5-8M | AF_XDP 零拷贝模式 |
+| 单节点并发连接 | 100万+ | 取决于内存配置 |
 | 延迟精度 | 微秒级 | |
 | 分布式扩展 | 横向扩展 | 多节点线性叠加 |
-| 域名级压测 | 支持 | |
-| TLS 握手压测 | 深度支持 | TLS 1.2 / 1.3 |
-
----
-
-## 🧠 与 dperf 的关系
-
-dperf 是优秀的 DPDK L4 性能测试工具，专注于：
-
-- IP 级 TCP/UDP 压测
-- 高性能 L4 CPS
-- 网络协议栈性能验证
-
-流量飓风在其思路基础上，扩展到：
-
-| 能力 | dperf | 流量飓风 |
-|------|--------|-----------|
-| L4 TCP CPS | ✅ | ✅ |
-| 域名级测试 | ❌ | ✅ |
-| HTTP 语义控制 | ❌ | ✅ |
-| TLS 1.3 压测 | ❌ | ✅ |
-| CC 行为仿真 | ❌ | ✅ |
-| 分布式节点池 | ❌ | ✅ |
-| L7 攻防验证 | ❌ | ✅ |
-
-流量飓风定位为：
-
-> 面向 L7 攻防验证的下一代 DPDK 流量平台。
 
 ---
 
@@ -72,50 +42,164 @@ dperf 是优秀的 DPDK L4 性能测试工具，专注于：
 ------------------------------------------------------
 |              |              |                    |
 节点1         节点2         节点3               节点N
-(DPDK引擎)   (DPDK引擎)   (DPDK引擎)         (DPDK引擎)
+(AF_XDP引擎) (AF_XDP引擎) (AF_XDP引擎)       (AF_XDP引擎)
                         |
                   目标系统
         (CDN / WAF / 高防 / 负载均衡)
 ```
 
----
+### 数据平面架构
 
-## 🚀 核心能力
-
-### 1️⃣ DPDK 高性能流量核心
-
-- Kernel Bypass 架构
-- 多队列 NIC 优化
-- NUMA 亲和性优化
-- 自定义 TCP 状态机
-- 零拷贝内存池
-- 微秒级调度
-
----
-
-### 2️⃣ L7 协议仿真能力
-
-- DNS 解析模块
-- SNI 指定
-- Host Header 自定义
-- HTTP KeepAlive
-- HTTP 短连接模式
-- TLS 1.2 / 1.3 握手洪泛
-- Header 随机化
-- User-Agent 池
-- Cookie 模拟
-- HTTP 状态码统计
+```
+┌─────────────────────────────────────────────┐
+│  work_space (per-worker 主循环)              │
+│  ┌──────────┐  ┌──────────┐  ┌───────────┐ │
+│  │ socket   │  │ mbuf     │  │ TX queue  │ │
+│  │ table    │  │ cache    │  │ (4096)    │ │
+│  │ O(1)查找 │  │ 3模板    │  │ batch-8   │ │
+│  └──────────┘  └──────────┘  └───────────┘ │
+│  ┌──────────────────────────────────────┐   │
+│  │ TCP 状态机 + HTTP 内联处理           │   │
+│  └──────────────────────────────────────┘   │
+└──────────────────┬──────────────────────────┘
+                   │ pktio vtable
+┌──────────────────┴──────────────────────────┐
+│  pktio_xdp (AF_XDP)                         │
+│  UMEM 4096 frames × 2048 bytes              │
+│  lock-free 四环: fill / comp / rx / tx      │
+│  零拷贝 TX/RX                                │
+└─────────────────────────────────────────────┘
+```
 
 ---
 
-### 3️⃣ 分布式节点池
+## 🚀 快速开始
 
-- 节点上线确认与调度分发
-- 全局 CPS 控制
-- 动态扩缩容
-- 流量均衡分发
-- Prometheus 指标输出
-- 支持裸金属 / 云主机 / 混合云
+### 环境要求
+
+- Linux 5.4+（AF_XDP 支持）
+- GCC 或 Clang
+- root 权限或 CAP_NET_RAW
+
+### 1. 安装系统依赖
+
+```bash
+# Ubuntu / Debian
+sudo apt update
+sudo apt install -y build-essential pkg-config python3-pip \
+    meson ninja-build \
+    libssl-dev libxdp-dev libbpf-dev
+
+# CentOS / RHEL / Amazon Linux 2
+sudo yum groupinstall -y "Development Tools"
+sudo yum install -y pkg-config python3-pip \
+    openssl-devel libxdp-devel libbpf-devel
+pip3 install meson ninja
+
+# 如果包管理器没有 meson/ninja，用 pip 安装
+pip3 install meson ninja
+```
+
+### 2. 编译
+
+```bash
+# 首次编译
+meson setup build
+ninja -C build
+
+# 运行测试
+ninja -C build test
+```
+
+预期输出：
+```
+Message: libxdp + libbpf found — building with AF_XDP pktio backend
+...
+Ok:  10
+Fail: 0
+```
+
+### 3. 运行 HTTP 压测
+
+```bash
+# 查看网关 MAC（目标的下一跳）
+ip neigh show
+
+# L7 HTTP 压测
+sudo ./build/engine/tests/bench_http -- \
+    -I eth0 \
+    -M <网关MAC> \
+    -U "http://目标地址/路径" \
+    -C 1000 -D 30
+
+# L4 TCP 握手压测
+sudo ./build/engine/tests/bench_l4 -- \
+    eth0 <网关MAC> <目标IP> 80 1000 30
+```
+
+### bench_http 参数说明
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `-I <ifname>` | 网卡接口（必填） | - |
+| `-M <mac>` | 网关 MAC（必填） | - |
+| `-U <url>` | 目标 URL（必填） | - |
+| `-S <ip>` | 源 IP（可选，自动检测） | 网卡 IP |
+| `-H <header>` | 额外 HTTP 头（可重复） | - |
+| `-C <num>` | 并发连接数 | 10 |
+| `-D <sec>` | 持续时间（秒） | 10 |
+| `-K <num>` | 每连接请求数（0=无限） | 1 |
+| `-B <num>` | 批量发起大小 | 64 |
+
+### bench_l4 参数说明
+
+```
+sudo ./bench_l4 -- <网卡> <目标MAC> <目标IP> [端口] [连接数] [时长秒]
+```
+
+---
+
+## 📂 目录结构
+
+```
+HurricaneX/
+├── cmd/                  # CLI 入口（hurricane, hurricane-ctl）
+├── engine/               # 流量引擎核心
+│   ├── include/hurricane/  # 头文件
+│   │   ├── pktio.h         # pktio vtable 抽象层
+│   │   ├── socket.h        # 64字节 socket 结构
+│   │   ├── socket_table.h  # O(1) 确定性查找表
+│   │   ├── mbuf_cache.h    # 包模板缓存（SYN/DATA/ACK）
+│   │   ├── work_space.h    # per-worker 上下文 + TX 队列
+│   │   ├── tcp.h           # TCP 状态机
+│   │   └── ...
+│   ├── src/
+│   │   ├── pktio_xdp.c    # AF_XDP 后端（零拷贝）
+│   │   ├── pktio_mock.c   # Mock 后端（测试用）
+│   │   ├── work_space.c   # 主循环 + TCP/HTTP 处理
+│   │   └── ...
+│   └── tests/
+│       ├── test_*.c        # 单元测试（10个）
+│       ├── bench_http.c    # L7 HTTP 压测
+│       └── bench_l4.c      # L4 TCP 压测
+├── scheduler/            # 分布式节点调度
+├── metrics/              # Prometheus 指标采集与输出
+├── configs/              # YAML 配置文件
+└── docs/                 # 文档
+```
+
+---
+
+## ⚙ 技术栈
+
+| 组件 | 技术 | 说明 |
+|------|------|------|
+| 数据平面 | C + AF_XDP | 内核旁路、零拷贝、自定义 TCP 状态机 |
+| 控制平面 | Go | 调度、API、指标聚合 |
+| 通信 | gRPC + mTLS | 双向证书认证 |
+| 指标 | Prometheus | Pull 模式 |
+| 可观测 | eBPF | 扩展探针 |
+| 配置 | YAML | 统一格式 |
 
 ---
 
@@ -127,83 +211,6 @@ dperf 是优秀的 DPDK L4 性能测试工具，专注于：
 - 抗 DDoS 设备测试
 - L7 攻防实验室环境验证
 - 安全红蓝对抗演练
-
----
-
-## ⚙ 技术栈
-
-- DPDK
-- C（流量核心）
-- Rust / Go（控制平面）
-- gRPC
-- Prometheus
-- eBPF（可观测扩展）
-- YAML（统一配置格式）
-
----
-
-## 📂 目录规划
-
-```
-HurricaneX/
-│
-├── cmd/                  # CLI 入口（hurricane, hurricane-ctl）
-├── engine/               # DPDK 流量引擎核心
-│   ├── tcp/              # 自定义 TCP 状态机
-│   ├── http/             # HTTP 协议仿真
-│   └── tls/              # TLS 握手引擎
-├── scheduler/            # 分布式节点调度
-├── metrics/              # Prometheus 指标采集与输出
-├── configs/              # YAML 配置文件
-├── preflight/            # 环境预检与依赖检测
-└── docs/                 # 文档
-```
-
----
-
-## 🔍 环境预检（Preflight Check）
-
-在启动前，HurricaneX 会自动执行环境预检，确认运行条件是否满足：
-
-| 检测项 | 说明 |
-|--------|------|
-| DPDK 驱动 | 检测 igb_uio / vfio-pci 是否加载 |
-| Hugepage | 检测 hugepage 分配状态及大小是否充足 |
-| NIC 绑定 | 检测目标网卡是否已绑定到 DPDK 驱动 |
-| CPU 亲和性 | 检测可用核心数及 NUMA 拓扑 |
-| 内存容量 | 根据目标并发数评估内存是否充足 |
-| 依赖库 | 检测 libdpdk、libnuma、OpenSSL 等依赖 |
-| 内核参数 | 检测 iommu、isolcpus 等内核启动参数 |
-| 权限 | 检测是否具有 root 或 CAP_NET_ADMIN 权限 |
-
-预检不通过时将输出具体缺失项及修复建议，不会强行启动。
-
-```bash
-./hurricane preflight
-```
-
----
-
-## 🧪 示例
-
-### 单节点
-
-```bash
-./hurricane \
-  --mode https \
-  --domain example.com \
-  --cps 5000000 \
-  --connections 100000000 \
-  --duration 120
-```
-
-### 分布式
-
-```bash
-hurricane-ctl deploy --nodes 10
-hurricane-ctl scale --cps 50000000
-hurricane-ctl monitor
-```
 
 ---
 
@@ -226,5 +233,5 @@ hurricane-ctl monitor
 
 ## 👨‍💻 作者
 
-Kerbos  
+Kerbos
 DevOps / 高性能网络 / 安全攻防工程师
