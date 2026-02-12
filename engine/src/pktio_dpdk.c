@@ -278,6 +278,24 @@ static int dpdk_tx_burst(hx_pktio_t *io, hx_pkt_t **pkts, int num_pkts)
     return (int)nb_tx;
 }
 
+static hx_result_t dpdk_alloc_pkt(hx_pktio_t *io, hx_pkt_t *pkt, hx_u32 size)
+{
+    dpdk_priv_t *priv = io->priv;
+    struct rte_mbuf *m = rte_pktmbuf_alloc(priv->mbuf_pool);
+    if (!m)
+        return HX_ERR_NOMEM;
+    char *data = rte_pktmbuf_append(m, size);
+    if (!data) {
+        rte_pktmbuf_free(m);
+        return HX_ERR_NOMEM;
+    }
+    pkt->data    = (hx_u8 *)data;
+    pkt->len     = 0;
+    pkt->buf_len = size;
+    pkt->opaque  = m;
+    return HX_OK;
+}
+
 static void dpdk_free_pkt(hx_pktio_t *io, hx_pkt_t *pkt)
 {
     (void)io;
@@ -290,11 +308,12 @@ static void dpdk_free_pkt(hx_pktio_t *io, hx_pkt_t *pkt)
 }
 
 const hx_pktio_ops_t hx_pktio_dpdk_ops = {
-    .init     = dpdk_init,
-    .close    = dpdk_close,
-    .rx_burst = dpdk_rx_burst,
-    .tx_burst = dpdk_tx_burst,
-    .free_pkt = dpdk_free_pkt,
+    .init      = dpdk_init,
+    .close     = dpdk_close,
+    .alloc_pkt = dpdk_alloc_pkt,
+    .rx_burst  = dpdk_rx_burst,
+    .tx_burst  = dpdk_tx_burst,
+    .free_pkt  = dpdk_free_pkt,
 };
 
 #endif /* HX_USE_DPDK */

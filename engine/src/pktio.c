@@ -19,6 +19,13 @@ void hx_pktio_close(hx_pktio_t *io)
         io->ops->close(io);
 }
 
+hx_result_t hx_pktio_alloc_pkt(hx_pktio_t *io, hx_pkt_t *pkt, hx_u32 size)
+{
+    if (!io || !io->ops || !io->ops->alloc_pkt || !pkt)
+        return HX_ERR_INVAL;
+    return io->ops->alloc_pkt(io, pkt, size);
+}
+
 int hx_pktio_rx_burst(hx_pktio_t *io, hx_pkt_t **pkts, int max_pkts)
 {
     if (!io || !io->ops || !io->ops->rx_burst)

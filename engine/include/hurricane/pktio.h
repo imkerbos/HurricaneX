@@ -26,6 +26,7 @@ typedef struct hx_pktio hx_pktio_t;
 typedef struct hx_pktio_ops {
     hx_result_t (*init)(hx_pktio_t *io, const char *dev, hx_mempool_t *mp);
     void        (*close)(hx_pktio_t *io);
+    hx_result_t (*alloc_pkt)(hx_pktio_t *io, hx_pkt_t *pkt, hx_u32 size);
     int         (*rx_burst)(hx_pktio_t *io, hx_pkt_t **pkts, int max_pkts);
     int         (*tx_burst)(hx_pktio_t *io, hx_pkt_t **pkts, int num_pkts);
     void        (*free_pkt)(hx_pktio_t *io, hx_pkt_t *pkt);
@@ -43,6 +44,9 @@ hx_result_t hx_pktio_init(hx_pktio_t *io, const hx_pktio_ops_t *ops,
 
 /* Shutdown packet I/O */
 void hx_pktio_close(hx_pktio_t *io);
+
+/* Allocate a packet buffer from the backend */
+hx_result_t hx_pktio_alloc_pkt(hx_pktio_t *io, hx_pkt_t *pkt, hx_u32 size);
 
 /* Receive a burst of packets. Returns number received (0..max_pkts). */
 int hx_pktio_rx_burst(hx_pktio_t *io, hx_pkt_t **pkts, int max_pkts);

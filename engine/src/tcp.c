@@ -89,29 +89,29 @@ static hx_result_t hx_tcp_send_segment(hx_tcp_conn_t *conn,
                                          const hx_u8 *payload,
                                          hx_u32 payload_len)
 {
-    if (!conn->pktio || !conn->pktio->mp)
+    if (!conn->pktio)
         return HX_ERR_INVAL;
 
-    hx_u8 *buf = hx_mempool_alloc(conn->pktio->mp);
-    if (!buf)
-        return HX_ERR_NOMEM;
+    hx_pkt_t *pkt = hx_tcp_alloc_pkt_desc();
+
+    /* Allocate buffer via backend — DPDK mode gets mbuf-backed memory */
+    hx_result_t rc = hx_pktio_alloc_pkt(conn->pktio, pkt, HX_MAX_PKT_SIZE);
+    if (rc != HX_OK)
+        return rc;
 
     hx_u32 seg_len = hx_tcp_build_segment(conn, flags, payload, payload_len,
-                                            buf, HX_MAX_PKT_SIZE);
+                                            pkt->data, pkt->buf_len);
     if (seg_len == 0) {
-        hx_mempool_free(conn->pktio->mp, buf);
+        hx_pktio_free_pkt(conn->pktio, pkt);
         return HX_ERR_NOMEM;
     }
 
-    hx_pkt_t *pkt = hx_tcp_alloc_pkt_desc();
-    pkt->data = buf;
     pkt->len = seg_len;
-    pkt->buf_len = HX_MAX_PKT_SIZE;
 
     hx_pkt_t *pkts[1] = { pkt };
     int sent = hx_pktio_tx_burst(conn->pktio, pkts, 1);
     if (sent != 1) {
-        hx_mempool_free(conn->pktio->mp, buf);
+        hx_pktio_free_pkt(conn->pktio, pkt);
         return HX_ERR_AGAIN;
     }
 
