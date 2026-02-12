@@ -33,12 +33,12 @@
 #define HX_LOG_COMP_XDP "pktio.xdp"
 
 /* UMEM configuration */
-#define XDP_NUM_FRAMES      4096
+#define XDP_NUM_FRAMES      16384
 #define XDP_FRAME_SIZE      2048
-#define XDP_FILL_RING_SIZE  2048
-#define XDP_COMP_RING_SIZE  2048
-#define XDP_RX_RING_SIZE    2048
-#define XDP_TX_RING_SIZE    2048
+#define XDP_FILL_RING_SIZE  4096
+#define XDP_COMP_RING_SIZE  4096
+#define XDP_RX_RING_SIZE    4096
+#define XDP_TX_RING_SIZE    4096
 
 /* Batch sizes */
 #define XDP_RX_BATCH        64
@@ -290,6 +290,9 @@ static int xdp_rx_burst(hx_pktio_t *io, hx_pkt_t **pkts, int max_pkts)
     xdp_priv_t *priv = io->priv;
     uint32_t idx;
     int received = 0;
+
+    /* Reclaim TX-done frames every RX burst to keep frame pool healthy */
+    xdp_reclaim_completion(priv);
 
     if (max_pkts > XDP_RX_DESC_POOL)
         max_pkts = XDP_RX_DESC_POOL;
