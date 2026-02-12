@@ -416,8 +416,8 @@ hx_result_t hx_engine_run(hx_engine_t *eng)
         /* Check termination: all connections resolved */
         hx_u64 done;
         if (eng->cfg.http_enabled) {
-            /* HTTP mode: done = closed + reset + failed (not just established) */
-            done = eng->stats.conns_closed +
+            /* HTTP mode: done when all responses received or connections failed */
+            done = eng->stats.http_resp_recv +
                    eng->stats.conns_reset +
                    eng->stats.conns_failed;
         } else {
