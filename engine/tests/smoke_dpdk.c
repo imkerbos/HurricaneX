@@ -34,19 +34,18 @@ int main(int argc, char **argv)
     printf("PASS: EAL initialized\n");
 
     /* 2. mempool (needed by pktio_init, DPDK backend ignores it) */
-    hx_mempool_t mp;
-    rc = hx_mempool_init(&mp, 64, 2048);
-    if (rc != HX_OK) {
-        fprintf(stderr, "FAIL: hx_mempool_init: %s\n", hx_strerror(rc));
+    hx_mempool_t *mp = hx_mempool_create("smoke", 64, 2048);
+    if (!mp) {
+        fprintf(stderr, "FAIL: hx_mempool_create\n");
         return 1;
     }
 
     /* 3. Open DPDK port 0 */
     hx_pktio_t io;
-    rc = hx_pktio_init(&io, &hx_pktio_dpdk_ops, "dpdk:0", &mp);
+    rc = hx_pktio_init(&io, &hx_pktio_dpdk_ops, "dpdk:0", mp);
     if (rc != HX_OK) {
         fprintf(stderr, "FAIL: hx_pktio_init(dpdk:0): %s\n", hx_strerror(rc));
-        hx_mempool_destroy(&mp);
+        hx_mempool_destroy(mp);
         return 1;
     }
     printf("PASS: port 0 opened\n");
@@ -64,7 +63,7 @@ int main(int argc, char **argv)
     hx_pktio_close(&io);
     printf("PASS: port closed\n");
 
-    hx_mempool_destroy(&mp);
+    hx_mempool_destroy(mp);
     hx_dpdk_cleanup();
     printf("PASS: EAL cleaned up\n");
 
