@@ -32,3 +32,9 @@ int hx_pktio_tx_burst(hx_pktio_t *io, hx_pkt_t **pkts, int num_pkts)
         return 0;
     return io->ops->tx_burst(io, pkts, num_pkts);
 }
+
+void hx_pktio_free_pkt(hx_pktio_t *io, hx_pkt_t *pkt)
+{
+    if (io && io->ops && io->ops->free_pkt)
+        io->ops->free_pkt(io, pkt);
+}

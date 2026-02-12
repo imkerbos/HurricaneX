@@ -13,6 +13,7 @@ const char *hx_strerror(hx_result_t err)
     case HX_ERR_TLS:        return "TLS error";
     case HX_ERR_PROTO:      return "protocol error";
     case HX_ERR_INTERNAL:   return "internal error";
+    case HX_ERR_DPDK:       return "DPDK error";
     default:                return "unknown error";
     }
 }

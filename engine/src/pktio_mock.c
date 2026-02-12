@@ -70,9 +70,16 @@ static int mock_tx_burst(hx_pktio_t *io, hx_pkt_t **pkts, int num_pkts)
     return sent;
 }
 
+static void mock_free_pkt(hx_pktio_t *io, hx_pkt_t *pkt)
+{
+    if (io && io->mp && pkt && pkt->data)
+        hx_mempool_free(io->mp, pkt->data);
+}
+
 const hx_pktio_ops_t hx_pktio_mock_ops = {
     .init     = mock_init,
     .close    = mock_close,
     .rx_burst = mock_rx_burst,
     .tx_burst = mock_tx_burst,
+    .free_pkt = mock_free_pkt,
 };
