@@ -1,18 +1,23 @@
 /*
  * L7 HTTP benchmark — DPDK-based HTTP request test.
  *
- * Creates N connections to a target, completes TCP handshake,
- * sends HTTP GET, receives response, then closes.
- * Measures HTTP RPS (requests per second).
- *
  * Usage:
- *   ./bench_http --lcores 0 -a <PCI> -- <dst_mac> <src_ip> <dst_ip|hostname>
- *       [dst_port] [num_conns] [duration_sec] [path] [host_header] [referer]
+ *   ./bench_http <EAL args> -- [options]
+ *
+ * Options:
+ *   -m <mac>       Gateway MAC (required)
+ *   -s <ip>        Source IP (required)
+ *   -u <url>       Target URL: http://host[:port]/path (required)
+ *   -H <header>    Extra header, e.g. "Referer: http://example.com/"
+ *   -n <num>       Number of connections (default: 10)
+ *   -d <sec>       Duration in seconds (default: 10)
  *
  * Example:
- *   ./bench_http --lcores 0 -a 7f:00.0 -- 06:bd:69:51:fc:e5 172.31.34.0 \
- *       uat-game.p3-uat.click 80 10 10 /api/v1/activity/list \
- *       uat-game.p3-uat.click "http://uat-game.p3-uat.click/"
+ *   ./bench_http --lcores 0 -a 7f:00.0 -- \
+ *       -m 06:dd:30:51:0d:3d -s 172.31.34.0 \
+ *       -u "http://uat-game.p3-uat.click/api/v1/activity/list" \
+ *       -H "Referer: http://uat-game.p3-uat.click/" \
+ *       -n 10 -d 30
  */
 #ifdef HX_USE_DPDK
 
@@ -112,6 +117,68 @@ static void print_stats(const hx_engine_stats_t *s)
     }
 }
 
+static void print_usage(const char *prog)
+{
+    fprintf(stderr,
+        "Usage: %s <EAL args> -- [options]\n"
+        "  -m <mac>       Gateway MAC (required)\n"
+        "  -s <ip>        Source IP (required)\n"
+        "  -u <url>       Target URL: http://host[:port]/path (required)\n"
+        "  -H <header>    Extra header (repeatable)\n"
+        "  -n <num>       Number of connections (default: 10)\n"
+        "  -d <sec>       Duration in seconds (default: 10)\n",
+        prog);
+}
+
+/*
+ * Parse URL: "http://host[:port][/path]"
+ * Fills host, port, path. Returns 0 on success.
+ */
+static int parse_url(const char *url, char *host, size_t host_sz,
+                     hx_u16 *port, char *path, size_t path_sz)
+{
+    const char *p = url;
+
+    /* Skip scheme */
+    if (strncmp(p, "http://", 7) == 0) {
+        p += 7;
+        *port = 80;
+    } else if (strncmp(p, "https://", 8) == 0) {
+        p += 8;
+        *port = 443;
+    } else {
+        *port = 80;
+    }
+
+    /* Find end of host (: or / or end) */
+    const char *host_start = p;
+    while (*p && *p != ':' && *p != '/')
+        p++;
+
+    size_t hlen = (size_t)(p - host_start);
+    if (hlen == 0 || hlen >= host_sz)
+        return -1;
+    memcpy(host, host_start, hlen);
+    host[hlen] = '\0';
+
+    /* Optional port */
+    if (*p == ':') {
+        p++;
+        *port = (hx_u16)atoi(p);
+        while (*p && *p != '/')
+            p++;
+    }
+
+    /* Path */
+    if (*p == '/') {
+        snprintf(path, path_sz, "%s", p);
+    } else {
+        snprintf(path, path_sz, "/");
+    }
+
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     printf("=== HurricaneX L7 HTTP Benchmark ===\n");
@@ -138,14 +205,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    /* Parse app args */
-    if (app_argc < 3) {
-        fprintf(stderr, "Usage: %s <EAL args> -- <dst_mac> <src_ip> <dst_ip|hostname>"
-                        " [dst_port] [num_conns] [duration_sec] [path]"
-                        " [host_header] [referer]\n", argv[0]);
-        return 1;
-    }
-
+    /* Parse app args: flag style */
     hx_engine_config_t cfg;
     memset(&cfg, 0, sizeof(cfg));
     srand((unsigned)time(NULL));
@@ -157,47 +217,63 @@ int main(int argc, char **argv)
     cfg.http_method = HX_HTTP_GET;
     snprintf(cfg.http_path, sizeof(cfg.http_path), "/");
 
-    if (parse_mac(app_argv[0], cfg.dst_mac) != 0) {
-        fprintf(stderr, "FAIL: invalid dst_mac '%s'\n", app_argv[0]);
+    int got_mac = 0, got_src = 0, got_url = 0;
+    int headers_off = 0; /* offset into http_extra_headers */
+
+    for (int i = 0; i < app_argc; i++) {
+        if (strcmp(app_argv[i], "-m") == 0 && i + 1 < app_argc) {
+            if (parse_mac(app_argv[++i], cfg.dst_mac) != 0) {
+                fprintf(stderr, "FAIL: invalid MAC '%s'\n", app_argv[i]);
+                return 1;
+            }
+            got_mac = 1;
+        } else if (strcmp(app_argv[i], "-s") == 0 && i + 1 < app_argc) {
+            if (parse_ipv4(app_argv[++i], &cfg.src_ip) != 0) {
+                fprintf(stderr, "FAIL: invalid src_ip '%s'\n", app_argv[i]);
+                return 1;
+            }
+            got_src = 1;
+        } else if (strcmp(app_argv[i], "-u") == 0 && i + 1 < app_argc) {
+            char host[256];
+            if (parse_url(app_argv[++i], host, sizeof(host),
+                          &cfg.dst_port, cfg.http_path,
+                          sizeof(cfg.http_path)) != 0) {
+                fprintf(stderr, "FAIL: invalid URL '%s'\n", app_argv[i]);
+                return 1;
+            }
+            /* Resolve host to IP */
+            if (resolve_host(host, &cfg.dst_ip) != 0) {
+                fprintf(stderr, "FAIL: cannot resolve '%s'\n", host);
+                return 1;
+            }
+            /* Set Host header */
+            snprintf(cfg.http_host, sizeof(cfg.http_host), "%s", host);
+            got_url = 1;
+        } else if (strcmp(app_argv[i], "-H") == 0 && i + 1 < app_argc) {
+            i++;
+            int w = snprintf(cfg.http_extra_headers + headers_off,
+                             sizeof(cfg.http_extra_headers) - headers_off,
+                             "%s\r\n", app_argv[i]);
+            if (w > 0)
+                headers_off += w;
+        } else if (strcmp(app_argv[i], "-n") == 0 && i + 1 < app_argc) {
+            cfg.num_conns = (hx_u32)atoi(app_argv[++i]);
+        } else if (strcmp(app_argv[i], "-d") == 0 && i + 1 < app_argc) {
+            cfg.duration_sec = (hx_u32)atoi(app_argv[++i]);
+        } else {
+            fprintf(stderr, "Unknown option: %s\n", app_argv[i]);
+            print_usage(argv[0]);
+            return 1;
+        }
+    }
+
+    if (!got_mac || !got_src || !got_url) {
+        fprintf(stderr, "Missing required options: %s%s%s\n",
+                got_mac ? "" : "-m ",
+                got_src ? "" : "-s ",
+                got_url ? "" : "-u ");
+        print_usage(argv[0]);
         return 1;
-    }
-    if (parse_ipv4(app_argv[1], &cfg.src_ip) != 0) {
-        fprintf(stderr, "FAIL: invalid src_ip '%s'\n", app_argv[1]);
-        return 1;
-    }
-
-    /* dst_ip: accept IPv4 or hostname (DNS resolve) */
-    const char *dst_host = app_argv[2];
-    if (resolve_host(dst_host, &cfg.dst_ip) != 0) {
-        fprintf(stderr, "FAIL: cannot resolve dst '%s'\n", dst_host);
-        return 1;
-    }
-
-    if (app_argc >= 4)
-        cfg.dst_port = (hx_u16)atoi(app_argv[3]);
-    if (app_argc >= 5)
-        cfg.num_conns = (hx_u32)atoi(app_argv[4]);
-    if (app_argc >= 6)
-        cfg.duration_sec = (hx_u32)atoi(app_argv[5]);
-    if (app_argc >= 7)
-        snprintf(cfg.http_path, sizeof(cfg.http_path), "%s", app_argv[6]);
-
-    /* Host header: use explicit arg, or hostname if DNS was used, or IP:port */
-    if (app_argc >= 8) {
-        snprintf(cfg.http_host, sizeof(cfg.http_host), "%s", app_argv[7]);
-    } else if (parse_ipv4(dst_host, &(hx_u32){0}) != 0) {
-        /* dst was a hostname — use it as Host header */
-        snprintf(cfg.http_host, sizeof(cfg.http_host), "%s", dst_host);
-    } else {
-        snprintf(cfg.http_host, sizeof(cfg.http_host), "%u.%u.%u.%u:%u",
-                 (cfg.dst_ip >> 24) & 0xFF, (cfg.dst_ip >> 16) & 0xFF,
-                 (cfg.dst_ip >> 8) & 0xFF, cfg.dst_ip & 0xFF, cfg.dst_port);
-    }
-
-    /* Referer header */
-    if (app_argc >= 9) {
-        snprintf(cfg.http_extra_headers, sizeof(cfg.http_extra_headers),
-                 "Referer: %s\r\n", app_argv[8]);
     }
 
     printf("  dst_mac:    %02x:%02x:%02x:%02x:%02x:%02x\n",
