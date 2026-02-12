@@ -24,6 +24,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <net/if.h>
+#include <linux/if_link.h>
 #include <poll.h>
 
 #include <xdp/xsk.h>
