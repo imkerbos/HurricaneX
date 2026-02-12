@@ -6,11 +6,12 @@
 #define HX_LOG_COMP_ENGINE "engine"
 
 /* SYN retransmit parameters */
-#define HX_SYN_RETRANSMIT_SEC  2.0   /* retry after 2 seconds */
-#define HX_SYN_MAX_RETRIES     5     /* give up after 5 retries */
+#define HX_SYN_RETRANSMIT_SEC  1.0   /* retry after 1 second */
+#define HX_SYN_MAX_RETRIES     3     /* give up after 3 retries */
+#define HX_SYN_RETRANSMIT_BATCH 32   /* max retransmits per scan */
 
 /* Default batch size: create this many connections per main-loop iteration */
-#define HX_CONNECT_BATCH_DEFAULT 32
+#define HX_CONNECT_BATCH_DEFAULT 64
 
 /* --- Time helpers ------------------------------------------------------ */
 
@@ -131,6 +132,7 @@ void hx_engine_retransmit_step(hx_engine_t *eng, double now)
         return;
 
     hx_conn_table_t *ct = eng->ct;
+    int sent = 0;
 
     for (hx_u32 i = 0; i < ct->capacity; i++) {
         hx_conn_slot_t *s = &ct->slots[i];
@@ -153,6 +155,10 @@ void hx_engine_retransmit_step(hx_engine_t *eng, double now)
             continue;
         }
 
+        /* Rate-limit: stop if we've sent enough retransmits this scan */
+        if (sent >= HX_SYN_RETRANSMIT_BATCH)
+            break;
+
         /* Retransmit SYN with original ISN */
         hx_result_t rc = hx_tcp_retransmit_syn(conn);
         if (rc == HX_OK) {
@@ -160,6 +166,10 @@ void hx_engine_retransmit_step(hx_engine_t *eng, double now)
             conn->retries++;
             eng->stats.conns_retransmit++;
             eng->stats.pkts_tx++;
+            sent++;
+        } else if (rc == HX_ERR_AGAIN || rc == HX_ERR_NOMEM) {
+            /* TX ring full — stop retransmitting this round */
+            break;
         }
     }
 }
