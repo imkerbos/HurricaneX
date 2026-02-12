@@ -152,6 +152,7 @@ static void test_three_way_handshake(void)
     hx_tcp_hdr_t syn_hdr;
     memcpy(&syn_hdr, rx[0]->data, sizeof(syn_hdr));
     assert(syn_hdr.flags == HX_TCP_FLAG_SYN);
+    hx_pktio_free_pkt(&io, rx[0]);
 
     /* Server responds with SYN+ACK */
     hx_u32 server_isn = 5000;
@@ -171,6 +172,7 @@ static void test_three_way_handshake(void)
     hx_tcp_hdr_t ack_hdr;
     memcpy(&ack_hdr, rx[0]->data, sizeof(ack_hdr));
     assert(ack_hdr.flags == HX_TCP_FLAG_ACK);
+    hx_pktio_free_pkt(&io, rx[0]);
 
     hx_pktio_close(&io);
     hx_mempool_destroy(mp);
@@ -208,6 +210,7 @@ static void test_data_transfer(void)
 
     /* Verify payload */
     assert(memcmp(rx[0]->data + HX_TCP_HDR_LEN, msg, msg_len) == 0);
+    hx_pktio_free_pkt(&io, rx[0]);
 
     hx_pktio_close(&io);
     hx_mempool_destroy(mp);
@@ -399,7 +402,7 @@ static void test_mock_pktio_loopback(void)
     assert(rx_pkts[0] == &pkt);
     assert(memcmp(rx_pkts[0]->data, "test-packet", 11) == 0);
 
-    hx_mempool_free(mp, buf);
+    hx_pktio_free_pkt(&io, rx_pkts[0]);
     hx_pktio_close(&io);
     hx_mempool_destroy(mp);
 

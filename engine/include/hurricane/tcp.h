@@ -60,7 +60,12 @@ hx_result_t hx_tcp_connect(hx_tcp_conn_t *conn,
 hx_result_t hx_tcp_send(hx_tcp_conn_t *conn,
                          const hx_u8 *data, hx_u32 len);
 
-/* Process an incoming packet for this connection */
+/*
+ * Process an incoming packet for this connection.
+ *
+ * Does NOT take ownership of pkt — caller is responsible for freeing
+ * it via hx_pktio_free_pkt() after this call returns.
+ */
 hx_result_t hx_tcp_input(hx_tcp_conn_t *conn, const hx_pkt_t *pkt);
 
 /* Initiate graceful close (send FIN) */

@@ -38,7 +38,7 @@ static void test_tx_rx_single(void)
     assert(rx[0] == &pkt);
     assert(memcmp(rx[0]->data, "packet-one", 10) == 0);
 
-    hx_mempool_free(mp, buf);
+    hx_pktio_free_pkt(&io, rx[0]);
     hx_pktio_close(&io);
     hx_mempool_destroy(mp);
     printf("  PASS: test_tx_rx_single\n");
@@ -83,7 +83,7 @@ static void test_tx_rx_burst(void)
     assert(hx_pktio_rx_burst(&io, rx, 4) == 0);
 
     for (int i = 0; i < 4; i++)
-        hx_mempool_free(mp, bufs[i]);
+        hx_pktio_free_pkt(&io, &pkts[i]);
     hx_pktio_close(&io);
     hx_mempool_destroy(mp);
     printf("  PASS: test_tx_rx_burst\n");
@@ -143,9 +143,9 @@ static void test_fifo_order(void)
     assert(memcmp(rx[1]->data, "BBB", 3) == 0);
     assert(memcmp(rx[2]->data, "CCC", 3) == 0);
 
-    hx_mempool_free(mp, b1);
-    hx_mempool_free(mp, b2);
-    hx_mempool_free(mp, b3);
+    hx_pktio_free_pkt(&io, rx[0]);
+    hx_pktio_free_pkt(&io, rx[1]);
+    hx_pktio_free_pkt(&io, rx[2]);
     hx_pktio_close(&io);
     hx_mempool_destroy(mp);
     printf("  PASS: test_fifo_order\n");

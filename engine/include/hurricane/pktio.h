@@ -48,13 +48,23 @@ void hx_pktio_close(hx_pktio_t *io);
 /* Allocate a packet buffer from the backend */
 hx_result_t hx_pktio_alloc_pkt(hx_pktio_t *io, hx_pkt_t *pkt, hx_u32 size);
 
-/* Receive a burst of packets. Returns number received (0..max_pkts). */
+/*
+ * Receive a burst of packets. Returns number received (0..max_pkts).
+ *
+ * Ownership: caller owns the returned packets and MUST free each one
+ * via hx_pktio_free_pkt() after processing. Failing to do so will
+ * leak mbufs in DPDK mode (~8191 packets until pool exhaustion).
+ */
 int hx_pktio_rx_burst(hx_pktio_t *io, hx_pkt_t **pkts, int max_pkts);
 
 /* Transmit a burst of packets. Returns number sent (0..num_pkts). */
 int hx_pktio_tx_burst(hx_pktio_t *io, hx_pkt_t **pkts, int num_pkts);
 
-/* Free a single packet back to the backend */
+/*
+ * Free a single packet back to the backend.
+ * Must be called for every packet obtained from hx_pktio_rx_burst()
+ * or hx_pktio_alloc_pkt() once the caller is done with it.
+ */
 void hx_pktio_free_pkt(hx_pktio_t *io, hx_pkt_t *pkt);
 
 /* Mock backend ops — for development/testing */
