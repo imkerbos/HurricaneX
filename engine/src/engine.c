@@ -13,7 +13,7 @@
 #define HX_SYN_RETRANSMIT_BATCH 32   /* max retransmits per scan */
 
 /* Default batch size: create this many connections per main-loop iteration */
-#define HX_CONNECT_BATCH_DEFAULT 64
+#define HX_CONNECT_BATCH_DEFAULT 16
 
 /* --- Time helpers ------------------------------------------------------ */
 
@@ -396,18 +396,24 @@ hx_result_t hx_engine_run(hx_engine_t *eng)
     while (eng->running) {
         double now = now_sec();
 
-        /* Phase 1: create connections incrementally */
+        /* RX first — drain incoming packets before doing TX work */
+        hx_engine_rx_step(eng);
+
+        /* Create connections incrementally */
         if (eng->conn_create_idx < eng->cfg.num_conns)
             hx_engine_connect_step(eng);
 
-        /* Phase 2: process incoming packets */
+        /* RX again — pick up SYN-ACKs from connections just created */
         hx_engine_rx_step(eng);
 
-        /* Phase 3: send HTTP requests for newly established connections */
+        /* Send HTTP requests for newly established connections */
         if (eng->cfg.http_enabled)
             hx_engine_http_step(eng);
 
-        /* Phase 4: retransmit SYNs (check every 0.5s to avoid overhead) */
+        /* RX again — pick up HTTP responses */
+        hx_engine_rx_step(eng);
+
+        /* Retransmit SYNs (check every 0.5s to avoid overhead) */
         if (now - last_retransmit >= 0.5) {
             hx_engine_retransmit_step(eng, now);
             last_retransmit = now;
