@@ -17,8 +17,8 @@
 #define DPDK_MBUF_CACHE_SZ  250
 
 /* RX/TX descriptor ring sizes */
-#define DPDK_RX_DESC  4096
-#define DPDK_TX_DESC  4096
+#define DPDK_RX_DESC  1024
+#define DPDK_TX_DESC  1024
 
 typedef struct dpdk_priv {
     uint16_t            port_id;
@@ -132,8 +132,29 @@ static hx_result_t dpdk_init(hx_pktio_t *io, const char *dev,
         return HX_ERR_DPDK;
     }
 
-    /* Setup TX queue */
-    ret = rte_eth_tx_queue_setup(port_id, 0, DPDK_TX_DESC, socket_id, NULL);
+    /* Get device info for default TX conf */
+    struct rte_eth_dev_info dev_info;
+    ret = rte_eth_dev_info_get(port_id, &dev_info);
+    if (ret < 0) {
+        HX_LOG_ERROR(HX_LOG_COMP_DPDK_IO,
+                     "rte_eth_dev_info_get failed for port %u: %d",
+                     port_id, ret);
+        rte_mempool_free(priv->mbuf_pool);
+        free(priv);
+        return HX_ERR_DPDK;
+    }
+
+    HX_LOG_INFO(HX_LOG_COMP_DPDK_IO,
+                "port %u: max_rx_queues=%u, max_tx_queues=%u, "
+                "tx_desc: min=%u max=%u",
+                port_id,
+                dev_info.max_rx_queues, dev_info.max_tx_queues,
+                dev_info.tx_desc_lim.nb_min, dev_info.tx_desc_lim.nb_max);
+
+    /* Setup TX queue with aggressive free threshold */
+    struct rte_eth_txconf tx_conf = dev_info.default_txconf;
+    tx_conf.tx_free_thresh = 16;  /* reclaim descriptors more aggressively */
+    ret = rte_eth_tx_queue_setup(port_id, 0, DPDK_TX_DESC, socket_id, &tx_conf);
     if (ret < 0) {
         HX_LOG_ERROR(HX_LOG_COMP_DPDK_IO,
                      "rte_eth_tx_queue_setup failed for port %u: %d",
