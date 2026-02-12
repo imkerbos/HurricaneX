@@ -13,7 +13,7 @@
 #ifdef HX_USE_DPDK
 
 #include "hurricane/dpdk.h"
-#include "hurricane/engine.h"
+#include "hurricane/work_space.h"
 #include "hurricane/mempool.h"
 #include "hurricane/log.h"
 
@@ -45,7 +45,7 @@ static int parse_ipv4(const char *str, hx_u32 *ip)
     return 0;
 }
 
-static void print_stats(const hx_engine_stats_t *s)
+static void print_stats(const struct hx_ws_stats *s)
 {
     printf("\n=== Results ===\n");
     printf("  elapsed:       %.3f sec\n", s->elapsed_sec);
@@ -97,14 +97,14 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    hx_engine_config_t cfg;
+    struct hx_ws_config cfg;
     memset(&cfg, 0, sizeof(cfg));
-    /* Randomize src_port_base to avoid kernel connection residue from prior runs */
     srand((unsigned)time(NULL));
     cfg.src_port_base = (hx_u16)(10000 + (rand() % 40000));
     cfg.dst_port = 80;
     cfg.num_conns = 10;
     cfg.duration_sec = 10;
+    cfg.launch_batch = 64;
 
     if (parse_mac(app_argv[0], cfg.dst_mac) != 0) {
         fprintf(stderr, "FAIL: invalid dst_mac '%s'\n", app_argv[0]);
@@ -164,34 +164,25 @@ int main(int argc, char **argv)
            cfg.src_mac[0], cfg.src_mac[1], cfg.src_mac[2],
            cfg.src_mac[3], cfg.src_mac[4], cfg.src_mac[5]);
 
-    /* Engine init + start + run */
-    hx_engine_t eng;
-    rc = hx_engine_init(&eng, &io, &cfg);
+    /* Work space init + run */
+    struct hx_work_space ws;
+    rc = hx_ws_init(&ws, &io, &cfg);
     if (rc != HX_OK) {
-        fprintf(stderr, "FAIL: hx_engine_init: %s\n", hx_strerror(rc));
+        fprintf(stderr, "FAIL: hx_ws_init: %s\n", hx_strerror(rc));
         hx_pktio_close(&io);
         hx_mempool_destroy(mp);
         return 1;
     }
 
     printf("\nStarting benchmark...\n");
-    rc = hx_engine_start(&eng);
-    if (rc != HX_OK) {
-        fprintf(stderr, "FAIL: hx_engine_start: %s\n", hx_strerror(rc));
-        hx_engine_cleanup(&eng);
-        hx_pktio_close(&io);
-        hx_mempool_destroy(mp);
-        return 1;
-    }
-
-    hx_engine_run(&eng);
+    hx_ws_run(&ws);
 
     /* Print results */
-    hx_engine_stats_t stats = hx_engine_get_stats(&eng);
+    struct hx_ws_stats stats = hx_ws_get_stats(&ws);
     print_stats(&stats);
 
     /* Cleanup */
-    hx_engine_cleanup(&eng);
+    hx_ws_cleanup(&ws);
     hx_pktio_close(&io);
     hx_mempool_destroy(mp);
     hx_dpdk_cleanup();

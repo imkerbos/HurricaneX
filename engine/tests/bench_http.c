@@ -12,6 +12,7 @@
  *   -C <num>       Number of connections (default: 10)
  *   -D <sec>       Duration in seconds (default: 10)
  *   -K <num>       Requests per connection (default: 1, 0=unlimited)
+ *   -B <num>       Launch batch size (default: 64)
  *
  * Note: uppercase letters avoid conflict with EAL's -s/-n/-m/-d options.
  *
@@ -25,7 +26,7 @@
 #ifdef HX_USE_DPDK
 
 #include "hurricane/dpdk.h"
-#include "hurricane/engine.h"
+#include "hurricane/work_space.h"
 #include "hurricane/mempool.h"
 #include "hurricane/log.h"
 
@@ -68,7 +69,6 @@ static int resolve_host(const char *str, hx_u32 *ip)
     if (parse_ipv4(str, ip) == 0)
         return 0;
 
-    /* DNS lookup */
     struct addrinfo hints, *res = NULL;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
@@ -93,7 +93,7 @@ static int resolve_host(const char *str, hx_u32 *ip)
     return 0;
 }
 
-static void print_stats(const hx_engine_stats_t *s)
+static void print_stats(const struct hx_ws_stats *s)
 {
     printf("\n=== Results ===\n");
     printf("  elapsed:       %.3f sec\n", s->elapsed_sec);
@@ -130,7 +130,8 @@ static void print_usage(const char *prog)
         "  -H <header>    Extra header (repeatable)\n"
         "  -C <num>       Number of connections (default: 10)\n"
         "  -D <sec>       Duration in seconds (default: 10)\n"
-        "  -K <num>       Requests per connection (default: 1, 0=unlimited)\n",
+        "  -K <num>       Requests per connection (default: 1, 0=unlimited)\n"
+        "  -B <num>       Launch batch size (default: 64)\n",
         prog);
 }
 
@@ -224,13 +225,14 @@ int main(int argc, char **argv)
     }
 
     /* Parse app args: flag style */
-    hx_engine_config_t cfg;
+    struct hx_ws_config cfg;
     memset(&cfg, 0, sizeof(cfg));
     srand((unsigned)time(NULL));
     cfg.src_port_base = (hx_u16)(10000 + (rand() % 40000));
     cfg.dst_port = 80;
     cfg.num_conns = 10;
     cfg.duration_sec = 10;
+    cfg.launch_batch = 64;
     cfg.http_enabled = true;
     cfg.http_method = HX_HTTP_GET;
     cfg.http_requests_per_conn = 1;
@@ -281,6 +283,8 @@ int main(int argc, char **argv)
             cfg.duration_sec = (hx_u32)atoi(app_args[++i]);
         } else if (strcmp(app_args[i], "-K") == 0 && i + 1 < app_argc) {
             cfg.http_requests_per_conn = (hx_u32)atoi(app_args[++i]);
+        } else if (strcmp(app_args[i], "-B") == 0 && i + 1 < app_argc) {
+            cfg.launch_batch = (hx_u32)atoi(app_args[++i]);
         } else {
             fprintf(stderr, "Unknown option: %s\n", app_args[i]);
             print_usage(argv[0]);
@@ -311,6 +315,7 @@ int main(int argc, char **argv)
            cfg.src_port_base + cfg.num_conns - 1);
     printf("  num_conns:  %u\n", cfg.num_conns);
     printf("  duration:   %u sec\n", cfg.duration_sec);
+    printf("  batch:      %u\n", cfg.launch_batch);
     printf("  http_host:  %s\n", cfg.http_host);
     printf("  http_path:  %s\n", cfg.http_path);
     if (cfg.http_extra_headers[0])
@@ -347,34 +352,25 @@ int main(int argc, char **argv)
            cfg.src_mac[0], cfg.src_mac[1], cfg.src_mac[2],
            cfg.src_mac[3], cfg.src_mac[4], cfg.src_mac[5]);
 
-    /* Engine init + start + run */
-    hx_engine_t eng;
-    rc = hx_engine_init(&eng, &io, &cfg);
+    /* Work space init + run */
+    struct hx_work_space ws;
+    rc = hx_ws_init(&ws, &io, &cfg);
     if (rc != HX_OK) {
-        fprintf(stderr, "FAIL: hx_engine_init: %s\n", hx_strerror(rc));
+        fprintf(stderr, "FAIL: hx_ws_init: %s\n", hx_strerror(rc));
         hx_pktio_close(&io);
         hx_mempool_destroy(mp);
         return 1;
     }
 
     printf("\nStarting HTTP benchmark...\n");
-    rc = hx_engine_start(&eng);
-    if (rc != HX_OK) {
-        fprintf(stderr, "FAIL: hx_engine_start: %s\n", hx_strerror(rc));
-        hx_engine_cleanup(&eng);
-        hx_pktio_close(&io);
-        hx_mempool_destroy(mp);
-        return 1;
-    }
-
-    hx_engine_run(&eng);
+    hx_ws_run(&ws);
 
     /* Print results */
-    hx_engine_stats_t stats = hx_engine_get_stats(&eng);
+    struct hx_ws_stats stats = hx_ws_get_stats(&ws);
     print_stats(&stats);
 
     /* Cleanup */
-    hx_engine_cleanup(&eng);
+    hx_ws_cleanup(&ws);
     hx_pktio_close(&io);
     hx_mempool_destroy(mp);
     hx_dpdk_cleanup();
