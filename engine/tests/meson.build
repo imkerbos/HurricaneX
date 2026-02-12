@@ -16,6 +16,12 @@ test('test_net',
   ),
 )
 
+test('test_conn_table',
+  executable('test_conn_table', 'test_conn_table.c',
+    dependencies : libhurricane_dep,
+  ),
+)
+
 test('test_log',
   executable('test_log', 'test_log.c',
     dependencies : libhurricane_dep,
@@ -47,5 +53,10 @@ executable('smoke_dpdk', 'smoke_dpdk.c',
 
 # DPDK TX smoke test — sends a SYN frame, verify with tcpdump on peer
 executable('smoke_tx', 'smoke_tx.c',
+  dependencies : libhurricane_dep,
+)
+
+# L4 TCP benchmark — DPDK handshake test
+executable('bench_l4', 'bench_l4.c',
   dependencies : libhurricane_dep,
 )

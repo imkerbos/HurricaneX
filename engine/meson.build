@@ -6,6 +6,8 @@ dpdk_dep = dependency('libdpdk', required : false)
 engine_sources = files(
   'src/common.c',
   'src/config.c',
+  'src/conn_table.c',
+  'src/engine.c',
   'src/log.c',
   'src/mempool.c',
   'src/net.c',
