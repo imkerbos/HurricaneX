@@ -148,6 +148,23 @@ static int ws_client_launch(struct hx_work_space *ws)
             sk->snd_nxt++; /* SYN consumes 1 seq */
             ws->stats.conns_attempted++;
             created++;
+
+            /* Debug: log first SYN */
+            if (created == 1) {
+                HX_LOG_WARN(HX_LOG_COMP_WS,
+                    "first SYN: %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u isn=%u",
+                    (hx_ntohl(sk->laddr) >> 24) & 0xFF,
+                    (hx_ntohl(sk->laddr) >> 16) & 0xFF,
+                    (hx_ntohl(sk->laddr) >> 8) & 0xFF,
+                    hx_ntohl(sk->laddr) & 0xFF,
+                    hx_ntohs(sk->lport),
+                    (hx_ntohl(sk->faddr) >> 24) & 0xFF,
+                    (hx_ntohl(sk->faddr) >> 16) & 0xFF,
+                    (hx_ntohl(sk->faddr) >> 8) & 0xFF,
+                    hx_ntohl(sk->faddr) & 0xFF,
+                    hx_ntohs(sk->fport),
+                    sk->snd_nxt - 1);
+            }
         } else {
             /* Back pressure — rewind pool index */
             ws->st->pool->next--;
@@ -340,6 +357,14 @@ int hx_ws_rx_step(struct hx_work_space *ws)
                                              &src_ip, &dst_ip,
                                              &tcp_seg, &tcp_len);
         if (rc != HX_OK || tcp_len < HX_TCP_HDR_LEN) {
+            /* Debug: log non-TCP or malformed packets (first 20) */
+            if (ws->stats.pkts_rx <= 20 && pkt->len >= 14) {
+                hx_u16 etype;
+                memcpy(&etype, pkt->data + 12, 2);
+                HX_LOG_WARN(HX_LOG_COMP_WS,
+                    "rx drop: len=%u etype=0x%04x rc=%d",
+                    pkt->len, hx_ntohs(etype), rc);
+            }
             hx_pktio_free_pkt(ws->pktio, pkt);
             continue;
         }
@@ -349,13 +374,41 @@ int hx_ws_rx_step(struct hx_work_space *ws)
         memcpy(&tcp_sport, tcp_seg + 0, 2);
         memcpy(&tcp_dport, tcp_seg + 2, 2);
 
+        /* Debug: log first 20 TCP packets */
+        if (ws->stats.pkts_rx <= 20) {
+            HX_LOG_WARN(HX_LOG_COMP_WS,
+                "rx tcp: %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u flags=0x%02x len=%u",
+                (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
+                (src_ip >> 8) & 0xFF, src_ip & 0xFF,
+                hx_ntohs(tcp_sport),
+                (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
+                (dst_ip >> 8) & 0xFF, dst_ip & 0xFF,
+                hx_ntohs(tcp_dport),
+                tcp_seg[13], tcp_len);
+        }
+
         /* Lookup: frame's dst = our local, frame's src = foreign */
         struct hx_socket *sk = hx_socket_lookup(
             ws->st,
             hx_htonl(dst_ip), tcp_dport,   /* our local */
             hx_htonl(src_ip), tcp_sport);   /* foreign */
 
-        if (sk) {
+        if (!sk) {
+            if (ws->stats.pkts_rx <= 20) {
+                HX_LOG_WARN(HX_LOG_COMP_WS,
+                    "rx lookup miss: local=%u.%u.%u.%u:%u foreign=%u.%u.%u.%u:%u "
+                    "table: lport=%u..%u fport=%u..%u faddr=0x%08x..0x%08x",
+                    (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
+                    (dst_ip >> 8) & 0xFF, dst_ip & 0xFF,
+                    hx_ntohs(tcp_dport),
+                    (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
+                    (src_ip >> 8) & 0xFF, src_ip & 0xFF,
+                    hx_ntohs(tcp_sport),
+                    ws->st->lport_min, ws->st->lport_max,
+                    ws->st->fport_min, ws->st->fport_max,
+                    ws->st->faddr_min, ws->st->faddr_max);
+            }
+        } else {
             ws_tcp_input(ws, sk, tcp_seg, tcp_len);
         }
 
