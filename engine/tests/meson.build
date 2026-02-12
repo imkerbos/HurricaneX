@@ -58,6 +58,12 @@ test('test_mbuf_cache',
   ),
 )
 
+test('test_work_space',
+  executable('test_work_space', 'test_work_space.c',
+    dependencies : libhurricane_dep,
+  ),
+)
+
 # DPDK smoke test — build only, not in auto-test (needs root + hugepages + NIC)
 executable('smoke_dpdk', 'smoke_dpdk.c',
   dependencies : libhurricane_dep,
