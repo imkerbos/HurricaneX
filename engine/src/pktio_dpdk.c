@@ -20,12 +20,19 @@
 #define DPDK_RX_DESC  1024
 #define DPDK_TX_DESC  1024
 
+/* TX buffering — accumulate packets, flush in batch */
+#define DPDK_TX_BUF_SIZE 64
+
 typedef struct dpdk_priv {
     uint16_t            port_id;
     uint16_t            rx_queue_id;    /* Phase 1: fixed 0 */
     uint16_t            tx_queue_id;    /* Phase 1: fixed 0 */
     struct rte_mempool *mbuf_pool;
     hx_pkt_t            pkt_descs[HX_MAX_BURST]; /* reusable RX descriptors */
+
+    /* TX buffer for batching */
+    struct rte_mbuf    *tx_buf[DPDK_TX_BUF_SIZE];
+    uint16_t            tx_buf_count;
 } dpdk_priv_t;
 
 /*
@@ -240,9 +247,28 @@ static int dpdk_rx_burst(hx_pktio_t *io, hx_pkt_t **pkts, int max_pkts)
 }
 
 /*
- * TX burst — dual path:
- *   - opaque != NULL: mbuf already backing the packet (zero-copy)
- *   - opaque == NULL: data from hx_mempool, allocate mbuf + memcpy (compat path)
+ * Flush the TX buffer — send all accumulated mbufs in one burst.
+ */
+static void dpdk_tx_flush(hx_pktio_t *io)
+{
+    dpdk_priv_t *priv = io->priv;
+    if (priv->tx_buf_count == 0)
+        return;
+
+    uint16_t nb_tx = rte_eth_tx_burst(priv->port_id, priv->tx_queue_id,
+                                       priv->tx_buf, priv->tx_buf_count);
+
+    /* Free unsent mbufs */
+    for (uint16_t i = nb_tx; i < priv->tx_buf_count; i++)
+        rte_pktmbuf_free(priv->tx_buf[i]);
+
+    priv->tx_buf_count = 0;
+}
+
+/*
+ * TX burst — buffered path.
+ * Converts hx_pkt_t to rte_mbuf and accumulates in TX buffer.
+ * Auto-flushes when buffer is full.
  */
 static int dpdk_tx_burst(hx_pktio_t *io, hx_pkt_t **pkts, int num_pkts)
 {
@@ -251,50 +277,42 @@ static int dpdk_tx_burst(hx_pktio_t *io, hx_pkt_t **pkts, int num_pkts)
     if (num_pkts > HX_MAX_BURST)
         num_pkts = HX_MAX_BURST;
 
-    struct rte_mbuf *mbufs[HX_MAX_BURST];
-
+    int sent = 0;
     for (int i = 0; i < num_pkts; i++) {
         hx_pkt_t *pkt = pkts[i];
+        struct rte_mbuf *m;
 
         if (pkt->opaque) {
             /* Zero-copy: mbuf already exists */
-            struct rte_mbuf *m = (struct rte_mbuf *)pkt->opaque;
-            /* Update mbuf length in case pkt->len was modified */
+            m = (struct rte_mbuf *)pkt->opaque;
             rte_pktmbuf_data_len(m) = (uint16_t)pkt->len;
             rte_pktmbuf_pkt_len(m)  = pkt->len;
-            mbufs[i] = m;
         } else {
             /* Compat path: allocate mbuf and copy data */
-            struct rte_mbuf *m = rte_pktmbuf_alloc(priv->mbuf_pool);
+            m = rte_pktmbuf_alloc(priv->mbuf_pool);
             if (!m) {
                 HX_LOG_WARN(HX_LOG_COMP_DPDK_IO,
                             "mbuf alloc failed during TX, dropping %d pkts",
                             num_pkts - i);
-                num_pkts = i;
                 break;
             }
             char *dst = rte_pktmbuf_append(m, pkt->len);
             if (!dst) {
                 rte_pktmbuf_free(m);
-                num_pkts = i;
                 break;
             }
             memcpy(dst, pkt->data, pkt->len);
-            mbufs[i] = m;
         }
+
+        priv->tx_buf[priv->tx_buf_count++] = m;
+        sent++;
+
+        /* Auto-flush when buffer is full */
+        if (priv->tx_buf_count >= DPDK_TX_BUF_SIZE)
+            dpdk_tx_flush(io);
     }
 
-    if (num_pkts == 0)
-        return 0;
-
-    uint16_t nb_tx = rte_eth_tx_burst(priv->port_id, priv->tx_queue_id,
-                                       mbufs, (uint16_t)num_pkts);
-
-    /* Free unsent mbufs */
-    for (uint16_t i = nb_tx; i < (uint16_t)num_pkts; i++)
-        rte_pktmbuf_free(mbufs[i]);
-
-    return (int)nb_tx;
+    return sent;
 }
 
 static hx_result_t dpdk_alloc_pkt(hx_pktio_t *io, hx_pkt_t *pkt, hx_u32 size)
@@ -333,6 +351,7 @@ const hx_pktio_ops_t hx_pktio_dpdk_ops = {
     .rx_burst  = dpdk_rx_burst,
     .tx_burst  = dpdk_tx_burst,
     .free_pkt  = dpdk_free_pkt,
+    .tx_flush  = dpdk_tx_flush,
 };
 
 #endif /* HX_USE_DPDK */

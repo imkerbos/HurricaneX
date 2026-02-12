@@ -67,6 +67,7 @@ typedef struct hx_tcp_conn {
 
     /* Application-layer state (used by engine for HTTP etc) */
     hx_app_state_t app_state;
+    hx_u32  app_req_count;     /* HTTP requests completed on this connection */
 
     /* Application receive buffer (used by engine for HTTP reassembly) */
     hx_u8   app_rxbuf[4096];

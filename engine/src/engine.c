@@ -352,10 +352,23 @@ int hx_engine_rx_step(hx_engine_t *eng)
                     else
                         eng->stats.http_resp_other++;
 
-                    /* Response received — close connection */
-                    conn->app_state = HX_APP_HTTP_DONE;
-                    hx_tcp_close(conn);
-                    eng->stats.pkts_tx++;
+                    conn->app_req_count++;
+
+                    /* Keep-alive: reuse connection for more requests */
+                    hx_u32 limit = eng->cfg.http_requests_per_conn;
+                    if (limit != 1 &&
+                        (limit == 0 || conn->app_req_count < limit) &&
+                        resp.keep_alive &&
+                        conn->state == HX_TCP_ESTABLISHED) {
+                        /* Reset for next request */
+                        conn->app_rxbuf_len = 0;
+                        conn->app_state = HX_APP_HTTP_SEND;
+                    } else {
+                        /* Done — close connection */
+                        conn->app_state = HX_APP_HTTP_DONE;
+                        hx_tcp_close(conn);
+                        eng->stats.pkts_tx++;
+                    }
                 }
                 /* If HX_ERR_AGAIN, wait for more data in next packet */
             }
@@ -419,13 +432,23 @@ hx_result_t hx_engine_run(hx_engine_t *eng)
             last_retransmit = now;
         }
 
+        /* Flush any buffered TX packets */
+        hx_pktio_tx_flush(eng->pktio);
+
         /* Check termination: all connections resolved */
         hx_u64 done;
         if (eng->cfg.http_enabled) {
-            /* HTTP mode: done when all responses received or connections failed */
-            done = eng->stats.http_resp_recv +
-                   eng->stats.conns_reset +
-                   eng->stats.conns_failed;
+            if (eng->cfg.http_requests_per_conn <= 1) {
+                /* Single request mode: done when all responses received */
+                done = eng->stats.http_resp_recv +
+                       eng->stats.conns_reset +
+                       eng->stats.conns_failed;
+            } else {
+                /* Keep-alive mode: done when all connections closed */
+                done = eng->stats.conns_closed +
+                       eng->stats.conns_reset +
+                       eng->stats.conns_failed;
+            }
         } else {
             /* L4 mode: established counts as done */
             done = eng->stats.conns_established +

@@ -126,7 +126,8 @@ static void print_usage(const char *prog)
         "  -u <url>       Target URL: http://host[:port]/path (required)\n"
         "  -H <header>    Extra header (repeatable)\n"
         "  -n <num>       Number of connections (default: 10)\n"
-        "  -d <sec>       Duration in seconds (default: 10)\n",
+        "  -d <sec>       Duration in seconds (default: 10)\n"
+        "  -k <num>       Requests per connection (default: 1, 0=unlimited)\n",
         prog);
 }
 
@@ -229,6 +230,7 @@ int main(int argc, char **argv)
     cfg.duration_sec = 10;
     cfg.http_enabled = true;
     cfg.http_method = HX_HTTP_GET;
+    cfg.http_requests_per_conn = 1;
     snprintf(cfg.http_path, sizeof(cfg.http_path), "/");
 
     int got_mac = 0, got_src = 0, got_url = 0;
@@ -274,6 +276,8 @@ int main(int argc, char **argv)
             cfg.num_conns = (hx_u32)atoi(app_args[++i]);
         } else if (strcmp(app_args[i], "-d") == 0 && i + 1 < app_argc) {
             cfg.duration_sec = (hx_u32)atoi(app_args[++i]);
+        } else if (strcmp(app_args[i], "-k") == 0 && i + 1 < app_argc) {
+            cfg.http_requests_per_conn = (hx_u32)atoi(app_args[++i]);
         } else {
             fprintf(stderr, "Unknown option: %s\n", app_args[i]);
             print_usage(argv[0]);
@@ -310,6 +314,11 @@ int main(int argc, char **argv)
         printf("  headers:    %.*s\n",
                (int)(strlen(cfg.http_extra_headers) - 2),
                cfg.http_extra_headers); /* trim trailing \r\n */
+    printf("  keep-alive: %s\n",
+           cfg.http_requests_per_conn == 1 ? "off" :
+           cfg.http_requests_per_conn == 0 ? "unlimited" : "on");
+    if (cfg.http_requests_per_conn > 1)
+        printf("  reqs/conn:  %u\n", cfg.http_requests_per_conn);
 
     /* Mempool + pktio */
     hx_mempool_t *mp = hx_mempool_create("bench", 256, 2048);

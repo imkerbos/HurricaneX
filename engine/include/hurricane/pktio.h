@@ -30,6 +30,7 @@ typedef struct hx_pktio_ops {
     int         (*rx_burst)(hx_pktio_t *io, hx_pkt_t **pkts, int max_pkts);
     int         (*tx_burst)(hx_pktio_t *io, hx_pkt_t **pkts, int num_pkts);
     void        (*free_pkt)(hx_pktio_t *io, hx_pkt_t *pkt);
+    void        (*tx_flush)(hx_pktio_t *io);  /* flush buffered TX packets */
 } hx_pktio_ops_t;
 
 struct hx_pktio {
@@ -59,6 +60,9 @@ int hx_pktio_rx_burst(hx_pktio_t *io, hx_pkt_t **pkts, int max_pkts);
 
 /* Transmit a burst of packets. Returns number sent (0..num_pkts). */
 int hx_pktio_tx_burst(hx_pktio_t *io, hx_pkt_t **pkts, int num_pkts);
+
+/* Flush any buffered TX packets. Call at end of each main-loop iteration. */
+void hx_pktio_tx_flush(hx_pktio_t *io);
 
 /*
  * Free a single packet back to the backend.

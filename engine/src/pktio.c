@@ -45,3 +45,9 @@ void hx_pktio_free_pkt(hx_pktio_t *io, hx_pkt_t *pkt)
     if (io && io->ops && io->ops->free_pkt)
         io->ops->free_pkt(io, pkt);
 }
+
+void hx_pktio_tx_flush(hx_pktio_t *io)
+{
+    if (io && io->ops && io->ops->tx_flush)
+        io->ops->tx_flush(io);
+}

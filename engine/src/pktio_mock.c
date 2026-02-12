@@ -91,6 +91,11 @@ static void mock_free_pkt(hx_pktio_t *io, hx_pkt_t *pkt)
         hx_mempool_free(io->mp, pkt->data);
 }
 
+static void mock_tx_flush(hx_pktio_t *io)
+{
+    (void)io; /* mock tx_burst sends immediately, nothing to flush */
+}
+
 const hx_pktio_ops_t hx_pktio_mock_ops = {
     .init      = mock_init,
     .close     = mock_close,
@@ -98,4 +103,5 @@ const hx_pktio_ops_t hx_pktio_mock_ops = {
     .rx_burst  = mock_rx_burst,
     .tx_burst  = mock_tx_burst,
     .free_pkt  = mock_free_pkt,
+    .tx_flush  = mock_tx_flush,
 };
