@@ -164,6 +164,17 @@ static int ws_client_launch(struct hx_work_space *ws)
                     hx_ntohl(sk->faddr) & 0xFF,
                     hx_ntohs(sk->fport),
                     sk->snd_nxt - 1);
+
+                /* Hex dump first 58 bytes of the SYN packet */
+                hx_pkt_t *last_pkt = ws->txq.buf[(ws->txq.tail - 1 + HX_TX_QUEUE_SIZE) % HX_TX_QUEUE_SIZE];
+                if (last_pkt && last_pkt->data && last_pkt->len >= 54) {
+                    char hex[180];
+                    int off = 0;
+                    hx_u32 dump_len = last_pkt->len < 58 ? last_pkt->len : 58;
+                    for (hx_u32 b = 0; b < dump_len && off < 174; b++)
+                        off += snprintf(hex + off, sizeof(hex) - off, "%02x ", last_pkt->data[b]);
+                    HX_LOG_WARN(HX_LOG_COMP_WS, "SYN hex[%u]: %s", last_pkt->len, hex);
+                }
             }
         } else {
             /* Back pressure — rewind pool index */
