@@ -6,8 +6,6 @@ dpdk_dep = dependency('libdpdk', required : false)
 engine_sources = files(
   'src/common.c',
   'src/config.c',
-  'src/conn_table.c',
-  'src/engine.c',
   'src/log.c',
   'src/mempool.c',
   'src/net.c',
@@ -19,6 +17,8 @@ engine_sources = files(
   'src/tcp.c',
   'src/http.c',
   'src/tls.c',
+  'src/conn_table.c',  # legacy — still used by test_conn_table, test_tcp, tls
+  'src/engine.c',      # legacy — kept for compilation, no external callers
 )
 
 engine_deps = [openssl_dep]
