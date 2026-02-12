@@ -6,11 +6,11 @@
 #define HX_LOG_COMP_ENGINE "engine"
 
 /* SYN retransmit parameters */
-#define HX_SYN_RETRANSMIT_SEC  1.0   /* retry after 1 second */
-#define HX_SYN_MAX_RETRIES     3     /* give up after 3 retries */
+#define HX_SYN_RETRANSMIT_SEC  2.0   /* retry after 2 seconds */
+#define HX_SYN_MAX_RETRIES     5     /* give up after 5 retries */
 
 /* Default batch size: create this many connections per main-loop iteration */
-#define HX_CONNECT_BATCH_DEFAULT 64
+#define HX_CONNECT_BATCH_DEFAULT 32
 
 /* --- Time helpers ------------------------------------------------------ */
 
