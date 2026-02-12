@@ -1,5 +1,6 @@
 #include "hurricane/http.h"
 #include <ctype.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
@@ -156,7 +157,7 @@ hx_result_t hx_http_parse_response(const hx_u8 *data, hx_u32 len,
                                               "Content-Length");
     if (cl_val) {
         hx_u64 v = 0;
-        if (sscanf(cl_val, "%llu", &v) == 1)
+        if (sscanf(cl_val, "%" SCNu64, &v) == 1)
             resp->content_length = v;
     }
 
