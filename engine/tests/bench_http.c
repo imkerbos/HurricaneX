@@ -184,33 +184,35 @@ int main(int argc, char **argv)
     printf("=== HurricaneX L7 HTTP Benchmark ===\n");
 
     /*
-     * Deep-copy entire argv before EAL init — rte_eal_init() modifies
-     * the argv array and can corrupt pointers after "--".
+     * Split argv into EAL args and app args at "--".
+     * Deep-copy app args because rte_eal_init() may modify the
+     * original argv array (including entries after eal_argc).
      */
-    char **saved_argv = malloc(sizeof(char *) * (argc + 1));
-    for (int i = 0; i < argc; i++) {
-        size_t len = strlen(argv[i]) + 1;
-        saved_argv[i] = malloc(len);
-        memcpy(saved_argv[i], argv[i], len);
-    }
-    saved_argv[argc] = NULL;
-
-    /* Split EAL / app args from the saved copy */
     int eal_argc = argc;
     int app_argc = 0;
-    char **app_args = NULL;
+    char *app_args[64];
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(saved_argv[i], "--") == 0) {
+        if (strcmp(argv[i], "--") == 0) {
             eal_argc = i;
-            app_args = &saved_argv[i + 1];
-            app_argc = argc - i - 1;
+            for (int j = i + 1; j < argc && app_argc < 64; j++) {
+                size_t len = strlen(argv[j]) + 1;
+                app_args[app_argc] = malloc(len);
+                memcpy(app_args[app_argc], argv[j], len);
+                app_argc++;
+            }
             break;
         }
     }
 
-    /* EAL init */
-    hx_dpdk_config_t dpdk_cfg = { .argc = eal_argc, .argv = argv };
+    /* Build a separate argv for EAL so it can't touch our app args */
+    char *eal_argv[64];
+    for (int i = 0; i < eal_argc && i < 64; i++)
+        eal_argv[i] = argv[i];
+    eal_argv[eal_argc] = NULL;
+
+    /* EAL init — use separate eal_argv */
+    hx_dpdk_config_t dpdk_cfg = { .argc = eal_argc, .argv = eal_argv };
     hx_result_t rc = hx_dpdk_init(&dpdk_cfg);
     if (rc != HX_OK) {
         fprintf(stderr, "FAIL: hx_dpdk_init: %s\n", hx_strerror(rc));
